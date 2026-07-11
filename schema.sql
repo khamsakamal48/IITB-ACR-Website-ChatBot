@@ -40,6 +40,20 @@ insert into sync_state (key, value)
   values ('last_sync', '1970-01-01T00:00:00Z')
   on conflict (key) do nothing;
 
+-- 3b. URL blocklist — pages to skip on ingest and purge from the KB.
+--     Store the normalized pathname, no trailing slash (e.g. '/resources').
+--     Read by Workflow A (Sectionize: skip insert) and A2 (Fetch Live IDs:
+--     treat as orphan → nightly delete). Add/remove rows to manage the list.
+create table if not exists acr_website_chatbot.kb_blocklist (
+  path     text primary key,      -- URL pathname, no trailing slash
+  note     text,                  -- why it's blocked (optional)
+  added_at timestamptz default now()
+);
+insert into acr_website_chatbot.kb_blocklist (path, note) values
+  ('/resources', 'empty page — menus only'),
+  ('/icic-merchant-response', 'empty page — junk content')
+  on conflict (path) do nothing;
+
 -- 4. Similarity search RPC used by the n8n Vector Store node (Workflow C).
 --    Signature matches what the node's "Query Name" (match_documents) expects:
 --    (query_embedding, match_count, filter) -> (id, content, metadata, similarity).
