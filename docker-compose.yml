@@ -31,4 +31,4 @@ services:
 # to the existing network instead of making a new isolated one.
 networks:
   n8n-net:
-    external: true
+    driver: bridge
