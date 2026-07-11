@@ -16,6 +16,8 @@ services:
     image: acr-trafilatura:latest
     container_name: acr-trafilatura
     restart: unless-stopped
+    networks:
+      - n8n-net
     ports:
       - "8080:8000"
     healthcheck:
@@ -27,7 +29,7 @@ services:
 
 # If your n8n runs in its own compose, attach both to a shared external network
 # instead of publishing the port. Example:
-#   networks:
-#     default:
-#       name: acr-net
-#       external: true
+#networks:
+# default:
+#   name: acr-net
+#   external: true
