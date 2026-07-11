@@ -1,14 +1,14 @@
 # ACR Chatbot — self-hosted services
 # Trafilatura HTML->Markdown microservice (replaces Jina Reader in Workflow A).
 #
-#   docker compose up -d --build
+#   podman compose up -d --build        # (Docker: docker compose up -d --build)
 #   curl -s localhost:8080/health
 #   curl -s -X POST localhost:8080/extract -H 'Content-Type: application/json' \
 #        -d '{"url":"https://acr.iitbombay.org/"}' | head
 #
-# Call from n8n:
-#   - n8n on the SAME docker network as this: http://trafilatura:8000/extract
-#   - n8n elsewhere / remote: http://<this-host-ip>:8080/extract (open the port / tunnel)
+# Call from n8n (n8n is on n8n-net, so use the container name, no published port needed):
+#   http://acr-trafilatura:8000/extract
+# n8n elsewhere / remote: http://<this-host-ip>:8080/extract (open the port / tunnel)
 
 services:
   trafilatura:
@@ -27,9 +27,8 @@ services:
       retries: 3
       start_period: 10s
 
-# If your n8n runs in its own compose, attach both to a shared external network
-# instead of publishing the port. Example:
-#networks:
-# default:
-#   name: acr-net
-#   external: true
+# n8n-net is created by n8n's own compose — declare it external so podman attaches
+# to the existing network instead of making a new isolated one.
+networks:
+  n8n-net:
+    external: true
