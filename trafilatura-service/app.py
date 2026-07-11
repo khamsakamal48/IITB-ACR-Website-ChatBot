@@ -11,6 +11,18 @@ from pydantic import BaseModel
 
 app = FastAPI(title="ACR Trafilatura Extractor", version="1.0")
 
+# Strip site chrome (nav/header/footer) before extraction. Content-less pages
+# (thank-you stubs, redirects) otherwise fall back to the nav menu — ~700 chars
+# of boilerplate that defeats any length-based "is this page empty" check.
+# After pruning, menu-only pages collapse to <150 chars while real pages keep
+# their body, so Workflow A's Sectionize length floor can drop the junk.
+BOILERPLATE_XPATH = [
+    "//header", "//footer", "//nav",
+    '//*[contains(@class,"menu")]', '//*[contains(@class,"nav")]',
+    '//*[contains(@class,"header")]', '//*[contains(@class,"footer")]',
+    '//*[contains(@id,"menu")]', '//*[contains(@id,"header")]', '//*[contains(@id,"footer")]',
+]
+
 
 class ExtractIn(BaseModel):
     url: Optional[str] = None
@@ -18,6 +30,7 @@ class ExtractIn(BaseModel):
     include_links: bool = True
     include_tables: bool = True
     favor_recall: bool = True  # keep more content; WP pages have real body text
+    prune_chrome: bool = True  # drop nav/header/footer so length reflects real content
 
 
 @app.get("/health")
@@ -43,6 +56,7 @@ def extract(inp: ExtractIn):
         include_tables=inp.include_tables,
         favor_recall=inp.favor_recall,
         include_comments=False,
+        prune_xpath=BOILERPLATE_XPATH if inp.prune_chrome else None,
     ) or ""
 
     title = None
