@@ -17,7 +17,7 @@ services:
     container_name: acr-trafilatura
     restart: unless-stopped
     networks:
-      - n8n-net
+      - n8n_net
     ports:
       - "8080:8000"
     healthcheck:
@@ -30,5 +30,5 @@ services:
 # n8n-net is created by n8n's own compose — declare it external so podman attaches
 # to the existing network instead of making a new isolated one.
 networks:
-  n8n-net:
-    driver: bridge
+  n8n_net:
+    external: true
