@@ -1,0 +1,83 @@
+{
+  "name": "ACR KB — C2: Hybrid Retrieve (tool sub-workflow)",
+  "nodes": [
+    {
+      "id": "trigger",
+      "name": "Retrieve Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 300],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [ { "name": "query", "type": "string" } ]
+        }
+      }
+    },
+    {
+      "id": "embed",
+      "name": "Embed Query (OpenAI)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"model\": \"text-embedding-3-small\", \"input\": $json.query } }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "buildvec",
+      "name": "Build Vector Literal",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300],
+      "parameters": {
+        "jsCode": "const e = $json.data[0].embedding;\nconst query = $('Retrieve Trigger').first().json.query;\nreturn [{ json: { query, vec: '[' + e.join(',') + ']' } }];"
+      }
+    },
+    {
+      "id": "search",
+      "name": "Hybrid Search",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [660, 300],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT content, metadata->>'url' AS url, metadata->>'title' AS title, metadata->>'section_heading' AS section, metadata->>'modified' AS modified, score FROM hybrid_search($1, $2::vector, 5, 30, 50, 0.01, '{}'::jsonb);",
+        "options": {
+          "queryReplacement": "={{ [ $json.query, $json.vec ] }}"
+        }
+      },
+      "credentials": { "postgres": { "id": "gSbuPWiqyD3Kr6zb", "name": "Supabase - kamal.hamza@iitbacr.com" } }
+    },
+    {
+      "id": "format",
+      "name": "Format Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300],
+      "parameters": {
+        "jsCode": "const rows = $input.all().map(i => i.json);\nif (!rows.length || !rows[0].content) return [{ json: { response: 'No relevant knowledge base entries found.', urls: [] } }];\nconst out = rows.map(r => `Source: ${r.title || ''}${r.section ? ' \\u2014 ' + r.section : ''}\\nURL: ${r.url || ''}\\nUpdated: ${r.modified || 'n/a'}\\n${r.content}`).join('\\n\\n---\\n\\n');\nconst urls = rows.map(r => r.url).filter(Boolean);\nreturn [{ json: { response: out, urls } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Retrieve Trigger": { "main": [ [ { "node": "Embed Query (OpenAI)", "type": "main", "index": 0 } ] ] },
+    "Embed Query (OpenAI)": { "main": [ [ { "node": "Build Vector Literal", "type": "main", "index": 0 } ] ] },
+    "Build Vector Literal": { "main": [ [ { "node": "Hybrid Search", "type": "main", "index": 0 } ] ] },
+    "Hybrid Search": { "main": [ [ { "node": "Format Results", "type": "main", "index": 0 } ] ] }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  }
+}

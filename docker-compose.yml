@@ -1,0 +1,33 @@
+# ACR Chatbot — self-hosted services
+# Trafilatura HTML->Markdown microservice (replaces Jina Reader in Workflow A).
+#
+#   docker compose up -d --build
+#   curl -s localhost:8080/health
+#   curl -s -X POST localhost:8080/extract -H 'Content-Type: application/json' \
+#        -d '{"url":"https://acr.iitbombay.org/"}' | head
+#
+# Call from n8n:
+#   - n8n on the SAME docker network as this: http://trafilatura:8000/extract
+#   - n8n elsewhere / remote: http://<this-host-ip>:8080/extract (open the port / tunnel)
+
+services:
+  trafilatura:
+    build: ./trafilatura-service
+    image: acr-trafilatura:latest
+    container_name: acr-trafilatura
+    restart: unless-stopped
+    ports:
+      - "8080:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+# If your n8n runs in its own compose, attach both to a shared external network
+# instead of publishing the port. Example:
+#   networks:
+#     default:
+#       name: acr-net
+#       external: true

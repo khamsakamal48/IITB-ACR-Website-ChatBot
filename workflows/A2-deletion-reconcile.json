@@ -1,0 +1,72 @@
+{
+  "id": "V9ntIMrBhp7FzHfa",
+  "name": "ACR KB — A2: Deletion Reconcile",
+  "nodes": [
+    {
+      "id": "trigger",
+      "name": "Nightly",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300],
+      "parameters": { "rule": { "interval": [ { "field": "days", "triggerAtHour": 3 } ] } }
+    },
+    {
+      "id": "live",
+      "name": "Fetch Live IDs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "parameters": {
+        "jsCode": "const types = ['pages','posts','campaign','causes','awards','alumni_story','news','csr','allstory','casestudy','events_list','annual_report','annual_contributors','legacy_project','batch_legacy','jobs','dean_desk','dean_circle','leadership_circle','giving_circle','chairman_circle','director_circle'];\nconst base = 'https://acr.iitbombay.org/wp-json/wp/v2/';\nconst live = new Set();\nfor (const t of types) {\n  let page = 1;\n  while (true) {\n    let items;\n    try { items = await this.helpers.httpRequest({ method: 'GET', url: base + t, json: true, qs: { status: 'publish', per_page: 100, page, _fields: 'id' } }); } catch (e) { break; }\n    if (!Array.isArray(items) || items.length === 0) break;\n    for (const it of items) { if (it.id === 2) continue; live.add(it.id + '|' + t); }\n    if (items.length < 100) break;\n    page++;\n  }\n}\nreturn [{ json: { liveKeys: [...live] } }];"
+      }
+    },
+    {
+      "id": "dbkeys",
+      "name": "Get DB Keys",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [440, 300],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT DISTINCT metadata->>'post_id' AS post_id, metadata->>'source_type' AS source_type FROM documents WHERE metadata->>'source_type' <> 'faq';",
+        "options": {}
+      }
+    },
+    {
+      "id": "orphans",
+      "name": "Compute Orphans",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 300],
+      "parameters": {
+        "jsCode": "const rows = $input.all();\nconst live = new Set($('Fetch Live IDs').first().json.liveKeys);\nconst orphans = [];\nfor (const r of rows) {\n  const k = r.json.post_id + '|' + r.json.source_type;\n  if (!live.has(k)) orphans.push(k);\n}\nreturn [{ json: { orphans } }];"
+      }
+    },
+    {
+      "id": "del",
+      "name": "Delete Orphans",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [880, 300],
+      "executeOnce": true,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM documents WHERE metadata->>'source_type' <> 'faq' AND (metadata->>'post_id' || '|' || metadata->>'source_type') = ANY($1);",
+        "options": { "queryReplacement": "={{ [ $json.orphans ] }}" }
+      }
+    }
+  ],
+  "connections": {
+    "Nightly": { "main": [ [ { "node": "Fetch Live IDs", "type": "main", "index": 0 } ] ] },
+    "Fetch Live IDs": { "main": [ [ { "node": "Get DB Keys", "type": "main", "index": 0 } ] ] },
+    "Get DB Keys": { "main": [ [ { "node": "Compute Orphans", "type": "main", "index": 0 } ] ] },
+    "Compute Orphans": { "main": [ [ { "node": "Delete Orphans", "type": "main", "index": 0 } ] ] }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  }
+}

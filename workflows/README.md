@@ -1,0 +1,77 @@
+# ACR KB — n8n workflow source files
+
+Local copies of the n8n workflows. Instance: **n8n-mcp-prod** →
+https://n8n.iitbacr.space (project: Kamal Thampi).
+
+| File | Workflow | Prod ID |
+|------|----------|---------|
+| `A-sync-wp-to-supabase.json` | KB Sync (WP → Supabase) | `XLnhEqr9EQV7QPZs` |
+| `A2-deletion-reconcile.json` | Deletion Reconcile | `V9ntIMrBhp7FzHfa` |
+| `B-faq-ingestion.json` | FAQ Ingestion (Sheet → Supabase) | `lkwnBD6mt0QToQho` |
+| `C-chatbot-rag-webhook.json` | Chatbot RAG (Agent + Memory) | `Tv9Oyxzal6jojZA5` |
+
+## Source-of-truth rule (avoid drift)
+
+**n8n prod = source of truth.** Two edit points (these files + the n8n UI)
+desync if you are not disciplined.
+
+- Edited in n8n UI → **re-export** to refresh the JSON here before editing
+  locally again.
+- Editing locally → push, then the file matches prod.
+- Never blind-push a stale local file over newer prod work — pull/compare first.
+
+## Edit → push loop (via n8n-mcp-prod MCP)
+
+1. Pull latest to compare: `n8n_get_workflow` (id above).
+2. Edit the JSON file locally.
+3. Push whole graph: `n8n_update_full_workflow` (id + nodes + connections),
+   or `n8n_update_partial_workflow` for a targeted node change.
+4. `n8n_validate_workflow` (id) → expect 0 errors.
+
+## Pluggable AI nodes (no hardcoded models)
+
+Embeddings and the LLM are n8n **sub-nodes**, not HTTP calls — swap models in
+the UI, no code edits:
+
+- *Embeddings (swap here)* — `embeddingsOpenAi` sub-node wired to the Supabase
+  Vector Store nodes in A, B, C via `ai_embedding`.
+- *Chat Model (swap here)* — `lmChatOpenAi` sub-node wired to the **AI Agent** in
+  C via `ai_languageModel`.
+
+Rules: keep the **same** embedding model across A/B/C, and match the model's
+vector dimension to `documents.embedding` in `schema.sql` (currently 1536).
+
+## Workflow C — Agent + Memory (chat widget)
+
+C is not a plain webhook anymore. Structure:
+
+- **When chat message received** (`chatTrigger`, public, streaming) — n8n's
+  embeddable chat widget; auto-manages a **per-visitor session id** and the
+  response. Embed URL: `.../webhook/4b32064b-25a7-499f-9d32-108760371c8f/chat`.
+- **AI Agent** (`agent` v3.1, `promptType: auto` → reads `$json.chatInput`) — the
+  brain. Tool-calling ready: add tools via `ai_tool`.
+- **ACR Knowledge Base (Supabase)** — Supabase Vector Store in
+  `retrieve-as-tool` mode, connected to the agent as an `ai_tool`. Agent decides
+  when to retrieve. (Validator falsely flags this `ai_tool` output as invalid —
+  it is the documented n8n pattern; ignore that one error.)
+- **Postgres Chat Memory** (`fromInput` session id, table `n8n_chat_histories`,
+  auto-created) — connected to **both** the agent (`ai_memory`) and the Chat
+  Trigger. The trigger link is required by `loadPreviousSession: memory` so the
+  widget reloads past messages on reopen.
+
+## Notes
+
+- **No secrets in these files** — credentials are attached in the n8n UI, not
+  stored here.
+- Credential types per node: **Postgres** (watermark/delete SQL in A, A2, B +
+  C's Postgres Chat Memory), **Supabase API** (Vector Store nodes in A, B, C),
+  **OpenAI** (Embeddings / Chat Model sub-nodes — **not yet added on the
+  instance**; C can't run until it is), **Google Sheets** (B).
+- Schema is the standard n8n LangChain Supabase layout
+  (`documents(id, content, metadata jsonb, embedding)` + `match_documents`
+  RPC). Structured keys live in `metadata`.
+- IDs (`id`, `webhookId`) are specific to this n8n instance; clean re-import
+  targets the same instance.
+- `B` needs the real Google Sheets ID — replace `PUT_SPREADSHEET_ID_HERE`.
+- Not a git repo yet. For real diffs/history run `git init` in the project
+  root later.

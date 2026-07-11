@@ -1,0 +1,97 @@
+{
+  "id": "Tv9Oyxzal6jojZA5",
+  "name": "ACR KB — C: Chatbot RAG (Agent + Memory)",
+  "nodes": [
+    {
+      "id": "250d5e5e-3128-4ebf-8644-026adcabfa90",
+      "name": "When chat message received",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [-208, 400],
+      "webhookId": "4b32064b-25a7-499f-9d32-108760371c8f",
+      "parameters": {
+        "public": true,
+        "initialMessages": "Hi there! 👋\nHow can I assist you today?",
+        "options": {
+          "allowFileUploads": false,
+          "inputPlaceholder": "Type your question..",
+          "loadPreviousSession": "memory",
+          "showWelcomeScreen": true,
+          "getStarted": "New Conversation",
+          "subtitle": "Start a chat. We're here to help you 24/7.",
+          "title": "Hi there! 👋",
+          "responseMode": "streaming"
+        }
+      }
+    },
+    {
+      "id": "agent",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [176, 400],
+      "parameters": {
+        "promptType": "auto",
+        "text": "={{ $json.chatInput }}",
+        "options": {
+          "systemMessage": "You are the assistant for the IIT Bombay Alumni & Development (ACR) website. ALWAYS use the ACR Knowledge Base tool to look up information before answering, and answer ONLY from what it returns. Each result includes a Source title, section, live URL, and an 'Updated' date. Always include the relevant live page link(s) as clickable markdown so the user can act (for example, donate). When two results give conflicting information, trust the one with the most recent 'Updated' date and ignore the older one. If the tool returns nothing relevant, say you do not have that information and offer to connect the user with the team. Use the prior conversation to resolve follow-up questions. Be concise."
+        }
+      }
+    },
+    {
+      "id": "chat",
+      "name": "Chat Model (swap here)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [144, 624],
+      "parameters": {
+        "model": { "__rl": true, "mode": "id", "value": "gpt-4o-mini" },
+        "options": { "temperature": 0.2 }
+      }
+    },
+    {
+      "id": "mem",
+      "name": "Postgres Chat Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryPostgresChat",
+      "typeVersion": 1.4,
+      "position": [-128, 624],
+      "parameters": {
+        "sessionIdType": "fromInput",
+        "tableName": "n8n_chat_histories"
+      },
+      "credentials": { "postgres": { "id": "gSbuPWiqyD3Kr6zb", "name": "Supabase - kamal.hamza@iitbacr.com" } }
+    },
+    {
+      "id": "kb",
+      "name": "ACR Knowledge Base (Hybrid)",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [272, 624],
+      "parameters": {
+        "description": "Search the IIT Bombay ACR website knowledge base (pages, FAQs, donation info). Input a fully formed question. Returns matching content with page title, section, live URL, and last-updated date. When sources conflict, prefer the one with the most recent 'Updated' date.",
+        "workflowId": { "__rl": true, "mode": "id", "value": "REPLACE_WITH_C2_WORKFLOW_ID" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": { "query": "={{ $fromAI('query', 'The fully formed user question to search the knowledge base for', 'string') }}" },
+          "matchingColumns": ["query"],
+          "schema": [
+            { "id": "query", "displayName": "query", "type": "string", "required": true, "canBeUsedToMatch": true, "removed": false }
+          ]
+        }
+      }
+    }
+  ],
+  "connections": {
+    "When chat message received": { "main": [ [ { "node": "AI Agent", "type": "main", "index": 0 } ] ] },
+    "Chat Model (swap here)": { "ai_languageModel": [ [ { "node": "AI Agent", "type": "ai_languageModel", "index": 0 } ] ] },
+    "Postgres Chat Memory": { "ai_memory": [ [ { "node": "AI Agent", "type": "ai_memory", "index": 0 }, { "node": "When chat message received", "type": "ai_memory", "index": 0 } ] ] },
+    "ACR Knowledge Base (Hybrid)": { "ai_tool": [ [ { "node": "AI Agent", "type": "ai_tool", "index": 0 } ] ] }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  }
+}

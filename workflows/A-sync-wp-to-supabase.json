@@ -1,0 +1,370 @@
+{
+  "id": "XLnhEqr9EQV7QPZs",
+  "name": "ACR KB \u2014 A: Sync (WP \u2192 Supabase)",
+  "nodes": [
+    {
+      "id": "trigger",
+      "name": "Every 6h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "getwm",
+      "name": "Get Watermark",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT value FROM sync_state WHERE key = 'last_sync' LIMIT 1;",
+        "options": {}
+      }
+    },
+    {
+      "id": "fetch",
+      "name": "Fetch & Extract",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Content-bearing WP REST types (edit list to add/remove CPTs)\nconst types = ['pages','posts','campaign','causes','awards','alumni_story','news','csr','allstory','casestudy','events_list','annual_report','annual_contributors','legacy_project','batch_legacy','jobs','dean_desk','dean_circle','leadership_circle','giving_circle','chairman_circle','director_circle'];\nconst base = 'https://acr.iitbombay.org/wp-json/wp/v2/';\nconst TRAFILATURA_URL = 'http://HOST:8080/extract'; // <-- point at the trafilatura service\nconst since = ($json.value ? String($json.value) : '1970-01-01T00:00:00');\nconst out = [];\nconst MAX_ITEMS = 0; // >0 = TEST MODE: ingest only first N posts, watermark NOT advanced. 0 = full run.\nlet postCount = 0;\nlet maxMod = since;\n\n// Header-aware sectioning: split markdown on #..###### headings, carry heading.\nfunction sectionize(md) {\n  const lines = String(md).split('\\n');\n  const secs = [];\n  let cur = { heading: '', body: [] };\n  for (const ln of lines) {\n    const m = ln.match(/^(#{1,6})\\s+(.*)$/);\n    if (m) {\n      if (cur.heading || cur.body.join('').trim()) secs.push(cur);\n      cur = { heading: m[2].trim(), body: [] };\n    } else { cur.body.push(ln); }\n  }\n  if (cur.heading || cur.body.join('').trim()) secs.push(cur);\n  return secs.length ? secs : [{ heading: '', body: [String(md)] }];\n}\n\nfor (const t of types) {\n  let page = 1;\n  while (true) {\n    let items;\n    try {\n      items = await this.helpers.httpRequest({\n        method: 'GET', url: base + t, json: true,\n        qs: { status: 'publish', per_page: 100, page, modified_after: since, orderby: 'modified', order: 'asc', _fields: 'id,link,title,modified,status,content' }\n      });\n    } catch (e) { break; }\n    if (!Array.isArray(items) || items.length === 0) break;\n    for (const it of items) {\n      if (it.id === 2) continue; // Sample Page\n      // Convert WP content.rendered HTML -> Markdown via self-hosted Trafilatura service.\n      const rawHtml = (it.content && it.content.rendered) ? it.content.rendered : '';\n      let md = '';\n      if (rawHtml) {\n        try {\n          const r = await this.helpers.httpRequest({ method: 'POST', url: TRAFILATURA_URL, json: true, body: { html: rawHtml } });\n          md = (r && r.markdown) ? r.markdown : '';\n        } catch (e) { md = ''; }\n      }\n      const title = (it.title && it.title.rendered) ? it.title.rendered : '';\n      const secs = sectionize(md);\n      const outline = secs.map(s => s.heading).filter(Boolean).join(' | ');\n      let ci = 0;\n      for (const s of secs) {\n        const body = s.body.join('\\n').trim();\n        if (!body && !s.heading) continue;\n        const heading = s.heading || title;\n        // Base chunk text; the LLM contextual prefix (Phase 2) is prepended downstream.\n        const content = (title + (s.heading ? ' \\u2014 ' + s.heading : '') + '\\n\\n' + body).trim();\n        out.push({ json: { post_id: it.id, source_type: t, url: it.link, title, modified: it.modified, section_heading: heading, chunk_index: ci, outline, content } });\n        ci++;\n      }\n      if (it.modified && it.modified > maxMod) maxMod = it.modified;\n      postCount++;\n      if (MAX_ITEMS > 0 && postCount >= MAX_ITEMS) break;\n    }\n    if (MAX_ITEMS > 0 && postCount >= MAX_ITEMS) break;\n    if (items.length < 100) break;\n    page++;\n  }\n  if (MAX_ITEMS > 0 && postCount >= MAX_ITEMS) break;\n}\nconst finalMax = (MAX_ITEMS > 0) ? since : maxMod; // test mode leaves watermark untouched\nfor (const o of out) o.json._maxModified = finalMax;\nreturn out;"
+      }
+    },
+    {
+      "id": "del",
+      "name": "Delete Changed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        660,
+        300
+      ],
+      "executeOnce": true,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM documents WHERE metadata->>'source_type' <> 'faq' AND (metadata->>'post_id' || '|' || metadata->>'source_type') = ANY($1);",
+        "options": {
+          "queryReplacement": "={{ [ [...new Set($('Fetch & Extract').all().map(i => i.json.post_id + '|' + i.json.source_type))] ] }}"
+        }
+      }
+    },
+    {
+      "id": "restore",
+      "name": "Restore Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        300
+      ],
+      "parameters": {
+        "jsCode": "return $('Fetch & Extract').all();"
+      }
+    },
+    {
+      "id": "ctx",
+      "name": "Contextualize (OpenAI)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1000,
+        120
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"model\": \"gpt-4o-mini\", \"temperature\": 0, \"max_tokens\": 60, \"messages\": [ { \"role\": \"system\", \"content\": \"You situate a document section for search retrieval. Reply with ONE concise sentence stating what this section covers within its page. No preamble, no quotes.\" }, { \"role\": \"user\", \"content\": \"Page title: \" + $json.title + \"\\nPage sections: \" + ($json.outline || \"n/a\") + \"\\nThis section: \" + ($json.section_heading || $json.title) + \"\\n\\nSection text:\\n\" + String($json.content).slice(0, 1500) } ] } }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "merge",
+      "name": "Merge Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const src = $('Restore Items').all();\nconst ai = $input.all();\nreturn src.map((s, i) => {\n  let ctx = '';\n  try { ctx = String(ai[i].json.choices[0].message.content).trim(); } catch (e) { ctx = ''; }\n  const j = { ...s.json };\n  j.context = ctx;\n  j.content = ctx ? (ctx + '\\n\\n' + j.content) : j.content;\n  return { json: j };\n});"
+      }
+    },
+    {
+      "id": "vstore",
+      "name": "Insert to Supabase",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreSupabase",
+      "typeVersion": 1.3,
+      "position": [
+        1120,
+        300
+      ],
+      "parameters": {
+        "mode": "insert",
+        "tableName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "documents"
+        },
+        "options": {
+          "queryName": "match_documents"
+        }
+      }
+    },
+    {
+      "id": "emb",
+      "name": "Embeddings (swap here)",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        1040,
+        520
+      ],
+      "parameters": {
+        "model": "text-embedding-3-small",
+        "options": {}
+      }
+    },
+    {
+      "id": "loader",
+      "name": "Default Data Loader",
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
+        520
+      ],
+      "parameters": {
+        "dataType": "json",
+        "jsonMode": "expressionData",
+        "jsonData": "={{ $json.content }}",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "post_id",
+                "value": "={{ $json.post_id }}"
+              },
+              {
+                "name": "source_type",
+                "value": "={{ $json.source_type }}"
+              },
+              {
+                "name": "url",
+                "value": "={{ $json.url }}"
+              },
+              {
+                "name": "title",
+                "value": "={{ $json.title }}"
+              },
+              {
+                "name": "modified",
+                "value": "={{ $json.modified }}"
+              },
+              {
+                "name": "section_heading",
+                "value": "={{ $json.section_heading }}"
+              },
+              {
+                "name": "chunk_index",
+                "value": "={{ $json.chunk_index }}"
+              },
+              {
+                "name": "context",
+                "value": "={{ $json.context }}"
+              }
+            ]
+          }
+        },
+        "textSplittingMode": "custom"
+      }
+    },
+    {
+      "id": "splitter",
+      "name": "Recursive Text Splitter",
+      "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
+      "typeVersion": 1,
+      "position": [
+        1360,
+        520
+      ],
+      "parameters": {
+        "chunkSize": 1500,
+        "chunkOverlap": 200,
+        "options": {}
+      }
+    },
+    {
+      "id": "setwm",
+      "name": "Update Watermark",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1560,
+        300
+      ],
+      "executeOnce": true,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE sync_state SET value = $1 WHERE key = 'last_sync';",
+        "options": {
+          "queryReplacement": "={{ [ $('Fetch & Extract').first().json._maxModified ] }}"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 6h": {
+      "main": [
+        [
+          {
+            "node": "Get Watermark",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Watermark": {
+      "main": [
+        [
+          {
+            "node": "Fetch & Extract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch & Extract": {
+      "main": [
+        [
+          {
+            "node": "Delete Changed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Changed": {
+      "main": [
+        [
+          {
+            "node": "Restore Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Items": {
+      "main": [
+        [
+          {
+            "node": "Contextualize (OpenAI)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contextualize (OpenAI)": {
+      "main": [
+        [
+          {
+            "node": "Merge Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Context": {
+      "main": [
+        [
+          {
+            "node": "Insert to Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert to Supabase": {
+      "main": [
+        [
+          {
+            "node": "Update Watermark",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings (swap here)": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Insert to Supabase",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Data Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "Insert to Supabase",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recursive Text Splitter": {
+      "ai_textSplitter": [
+        [
+          {
+            "node": "Default Data Loader",
+            "type": "ai_textSplitter",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  }
+}
