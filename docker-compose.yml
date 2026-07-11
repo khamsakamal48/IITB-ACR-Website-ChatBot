@@ -27,8 +27,10 @@ services:
       retries: 3
       start_period: 10s
 
-# n8n-net is created by n8n's own compose — declare it external so podman attaches
-# to the existing network instead of making a new isolated one.
+# n8n runs on the network n8n-production created. Attach to that existing network
+# (external) via its real name instead of making a new isolated one.
+# Confirm the name with: sudo podman ps --format '{{.Names}} {{.Networks}}' | grep n8n
 networks:
   n8n_net:
     external: true
+    name: n8n-production_n8n-net
