@@ -12,3 +12,6 @@ __pycache__/
 
 # Separate upstream repo (Carlos-Vera/BravesChat)
 /BravesChat/
+
+# Team review documents (generated from KB content)
+/ACR Chatbot - *.docx
