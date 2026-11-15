@@ -16,11 +16,20 @@ app = FastAPI(title="ACR Trafilatura Extractor", version="1.0")
 # of boilerplate that defeats any length-based "is this page empty" check.
 # After pruning, menu-only pages collapse to <150 chars while real pages keep
 # their body, so Workflow A's Sectionize length floor can drop the junk.
+#
+# Match chrome classes exactly enough to miss content: this theme names real body
+# blocks `page-header` / `section-header` / `detail-page-header-left-content`, so a
+# bare contains(@class,"header") deletes every legacy_project intro and project
+# section. Same trap for "menu" (site nav is `mobile-menu`/`menuOverlay`).
+# "footer" is scoped below <body>: Elementor pages carry body class
+# `page-template-elementor_header_footer`, so an unscoped match deletes the whole page.
 BOILERPLATE_XPATH = [
     "//header", "//footer", "//nav",
-    '//*[contains(@class,"menu")]', '//*[contains(@class,"nav")]',
-    '//*[contains(@class,"header")]', '//*[contains(@class,"footer")]',
-    '//*[contains(@id,"menu")]', '//*[contains(@id,"header")]', '//*[contains(@id,"footer")]',
+    '//*[contains(@class,"mobile-menu")]', '//*[contains(@class,"menuOverlay")]',
+    '//*[contains(@class,"header-box")]', '//*[contains(@class,"header-list")]',
+    '//*[contains(@class,"header-search")]',
+    '//body//*[contains(@class,"footer")]',
+    '//*[contains(@id,"menu")]', '//*[contains(@id,"footer")]',
 ]
 
 

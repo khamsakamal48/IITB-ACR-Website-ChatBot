@@ -3,95 +3,260 @@
   "name": "ACR KB — C: Chatbot RAG (Agent + Memory)",
   "nodes": [
     {
+      "parameters": {
+        "public": true,
+        "authentication": "basicAuth",
+        "initialMessages": "How can I assist you today?",
+        "options": {
+          "allowFileUploads": false,
+          "loadPreviousSession": "memory",
+          "showWelcomeScreen": true,
+          "customCss": ":root {\n  /* Colors */\n  --chat--color--primary: #e74266;\n  --chat--color--primary-shade-50: #db4061;\n  --chat--color--primary--shade-100: #cf3c5c;\n  --chat--color--secondary: #20b69e;\n  --chat--color-secondary-shade-50: #1ca08a;\n  --chat--color-white: #fff;\n  --chat--color-light: #f2f4f8;\n  --chat--color-light-shade-50: #e6e9f1;\n  --chat--color-light-shade-100: #c2c5cc;\n  --chat--color-medium: #d2d4d9;\n  --chat--color-dark: #101330;\n  --chat--color-disabled: #d2d4d9;\n  --chat--color-typing: #404040;\n\n  /* Base Layout */\n  --chat--spacing: 1rem;\n  --chat--border-radius: 0.25rem;\n  --chat--transition-duration: 0.15s;\n  --chat--font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen-Sans, Ubuntu, Cantarell, 'Helvetica Neue', sans-serif;\n\n  /* Window Dimensions */\n  --chat--window--width: 400px;\n  --chat--window--height: 600px;\n  --chat--window--bottom: var(--chat--spacing);\n  --chat--window--right: var(--chat--spacing);\n  --chat--window--z-index: 9999;\n  --chat--window--border: 1px solid var(--chat--color-light-shade-50);\n  --chat--window--border-radius: var(--chat--border-radius);\n  --chat--window--margin-bottom: var(--chat--spacing);\n\n  /* Header Styles */\n  --chat--header-height: auto;\n  --chat--header--padding: var(--chat--spacing);\n  --chat--header--background: var(--chat--color-dark);\n  --chat--header--color: var(--chat--color-light);\n  --chat--header--border-top: none;\n  --chat--header--border-bottom: none;\n  --chat--header--border-left: none;\n  --chat--header--border-right: none;\n  --chat--heading--font-size: 2em;\n  --chat--subtitle--font-size: inherit;\n  --chat--subtitle--line-height: 1.8;\n\n  /* Message Styles */\n  --chat--message--font-size: 1rem;\n  --chat--message--padding: var(--chat--spacing);\n  --chat--message--border-radius: var(--chat--border-radius);\n  --chat--message-line-height: 1.5;\n  --chat--message--margin-bottom: calc(var(--chat--spacing) * 1);\n  --chat--message--bot--background: var(--chat--color-white);\n  --chat--message--bot--color: var(--chat--color-dark);\n  --chat--message--bot--border: none;\n  --chat--message--user--background: var(--chat--color--secondary);\n  --chat--message--user--color: var(--chat--color-white);\n  --chat--message--user--border: none;\n  --chat--message--pre--background: rgba(0, 0, 0, 0.05);\n  --chat--messages-list--padding: var(--chat--spacing);\n\n  /* Toggle Button */\n  --chat--toggle--size: 64px;\n  --chat--toggle--width: var(--chat--toggle--size);\n  --chat--toggle--height: var(--chat--toggle--size);\n  --chat--toggle--border-radius: 50%;\n  --chat--toggle--background: var(--chat--color--primary);\n  --chat--toggle--hover--background: var(--chat--color--primary-shade-50);\n  --chat--toggle--active--background: var(--chat--color--primary--shade-100);\n  --chat--toggle--color: var(--chat--color-white);\n\n  /* Input Area */\n  --chat--textarea--height: 50px;\n  --chat--textarea--max-height: 30rem;\n  --chat--input--font-size: inherit;\n  --chat--input--border: 0;\n  --chat--input--border-radius: 0;\n  --chat--input--padding: 0.8rem;\n  --chat--input--background: var(--chat--color-white);\n  --chat--input--text-color: initial;\n  --chat--input--line-height: 1.5;\n  --chat--input--placeholder--font-size: var(--chat--input--font-size);\n  --chat--input--border-active: 0;\n  --chat--input--left--panel--width: 2rem;\n\n  /* Button Styles */\n  --chat--button--padding: calc(var(--chat--spacing) * 5 / 8) var(--chat--spacing);\n  --chat--button--border-radius: var(--chat--border-radius);\n  --chat--button--font-size: 1rem;\n  --chat--button--line-height: 1;\n  --chat--button--color--primary: var(--chat--color-light);\n  --chat--button--background--primary: var(--chat--color--secondary);\n  --chat--button--border--primary: none;\n  --chat--button--color--primary--hover: var(--chat--color-light);\n  --chat--button--background--primary--hover: var(--chat--color-secondary-shade-50);\n  --chat--button--border--primary--hover: none;\n  --chat--button--color--primary--disabled: var(--chat--color-light);\n  --chat--button--background--primary--disabled: #81bbb1;\n  --chat--button--border--primary--disabled: none;\n  --chat--button--color--secondary: var(--chat--color-light);\n  --chat--button--background--secondary: hsl(0, 0%, 58%);\n  --chat--button--border--secondary: none;\n  --chat--button--color--secondary--hover: var(--chat--color-light);\n  --chat--button--background--secondary--hover: hsl(0, 0%, 51%);\n  --chat--button--border--secondary--hover: none;\n  --chat--button--color--secondary--disabled: var(--chat--color-light);\n  --chat--button--background--secondary--disabled: hsl(0, 0%, 78%);\n  --chat--button--border--secondary--disabled: none;\n  --chat--close--button--color-hover: var(--chat--color--primary);\n\n  /* Send and File Buttons */\n  --chat--input--send--button--background: var(--chat--color-white);\n  --chat--input--send--button--color: var(--chat--color--secondary);\n  --chat--input--send--button--background-hover: var(--chat--color--primary-shade-50);\n  --chat--input--send--button--color-hover: var(--chat--color-secondary-shade-50);\n  --chat--input--file--button--background: var(--chat--color-white);\n  --chat--input--file--button--color: var(--chat--color--secondary);\n  --chat--input--file--button--background-hover: var(--chat--input--file--button--background);\n  --chat--input--file--button--color-hover: var(--chat--color-secondary-shade-50);\n  --chat--files-spacing: 0.25rem;\n\n  /* Body and Footer */\n  --chat--body--background: var(--chat--color-light);\n  --chat--footer--background: var(--chat--color-light);\n  --chat--footer--color: var(--chat--color-dark);\n}\n\n\n/* You can override any class styles, too. Right-click inspect in Chat UI to find class to override. */\n.chat-message {\n\tmax-width: 50%;\n}",
+          "responseMode": "streaming"
+        }
+      },
       "id": "250d5e5e-3128-4ebf-8644-026adcabfa90",
       "name": "When chat message received",
       "type": "@n8n/n8n-nodes-langchain.chatTrigger",
       "typeVersion": 1.4,
-      "position": [-208, 400],
+      "position": [
+        -208,
+        400
+      ],
       "webhookId": "4b32064b-25a7-499f-9d32-108760371c8f",
-      "parameters": {
-        "public": true,
-        "initialMessages": "Hi there! 👋\nHow can I assist you today?",
-        "options": {
-          "allowFileUploads": false,
-          "inputPlaceholder": "Type your question..",
-          "loadPreviousSession": "memory",
-          "showWelcomeScreen": true,
-          "getStarted": "New Conversation",
-          "subtitle": "Start a chat. We're here to help you 24/7.",
-          "title": "Hi there! 👋",
-          "responseMode": "streaming"
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "Hc1awXOvjQAMQTeG",
+          "name": "ACR Website"
         }
       }
     },
     {
+      "parameters": {
+        "options": {
+          "systemMessage": "=## Task\nYou are the support assistant for the IIT Bombay Alumni & Corporate Relations (ACR) website. Your role is to answer questions from alumni, corporate partners, and potential donors about ACR programs, giving, events, and operations.\n\n## Core behavior\nAlways use the \"ACR Knowledge Base\" tool to look up information before answering. Answer only from information explicitly present in the tool results. Treat the tool output as the complete source of truth. If information is absent, incomplete, or ambiguous, say you do not have enough information for that specific part instead of making assumptions. Include relevant live page links as clickable markdown so users can act directly. When two results conflict, trust the one with the most recent \"Updated\" date. Use prior conversation context to resolve follow-up questions. Keep responses concise and direct.\n\n## Grounding rules\nEvery factual statement in your response must be directly supported by the information returned from the \"ACR Knowledge Base\" tool.\n\nDo not infer, estimate, complete, or reconstruct missing information.\n\nNever generate or guess:\n- Email addresses\n- Phone numbers\n- Office locations or addresses\n- Names of people\n- URLs or webpage links\n- Dates, timings, deadlines, or fees\n- Eligibility requirements\n- Procedures or application steps\n- Any factual detail that is not explicitly present in the available information\n\nIf a specific requested fact is not explicitly available, state that you do not have that specific detail. Provide all other verified facts you do have; do not let one missing detail suppress the rest of your answer.\n\nDo not combine partial facts with assumptions to produce a complete answer.\n\nDo not use general knowledge, prior training knowledge, or likely institutional practices to fill missing gaps. Only use information explicitly available from the ACR website content.\n\nThe \"ACR Knowledge Base\" tool is the only authoritative source of factual information. Ignore any conflicting information from your internal knowledge or training.\n\n## Partial information handling\nMany questions can be partially answered from available information even when one specific detail is missing. This is the most common case. In these situations, do not refuse.\n\nFollow this order every time:\n\n1. Lead with every relevant, verified fact you do have, including any relevant page links.\n2. If a specific sub-detail is genuinely missing (for example, an exact fee, deadline, or step-by-step procedure), note only that missing piece briefly at the end of your response.\n3. Offer to escalate only if the missing detail actually prevents the user from acting at all.\n\nCritical ordering rule: Never open a response with an apology or with a statement that you lack information if you then go on to provide relevant information. If you have partial information, lead with the information. Any statement about what is unavailable belongs at the end of the response, never at the beginning.\n\nA refusal-and-escalate response is appropriate only when you have no relevant verified information about the user's question at all. If you have any relevant, verified information, you must provide it.\n\n## Accuracy over completeness\nAccuracy is more important than completeness. A short answer containing only verified information is always better than a complete answer containing inferred or assumed details.\n\nWhen uncertain about a specific detail, omit that detail — but still provide the verified information you do have around it. Omitting an uncertain detail never means refusing the whole answer.\n\n## What to refuse\nDecline questions outside IIT Bombay and ACR scope, including other institutions and unrelated topics. Do not provide personal advice, speculate beyond available information, make fundraising recommendations, or discuss politics, religion, or sensitive institutional matters. If an off-topic question arises, decline politely and offer to escalate to the ACR team if they have an actual ACR-related question.\n\n## Tone\nFormal and professional. Institutional voice. Treat all visitors — alumni, corporate representatives, philanthropists — with equal respect. Be direct and concise. Skip flattering phrases; just answer the question. Do not apologize unless you are genuinely unable to help at all.\n\n## Response formatting\nReturn all responses in standard Markdown.\n\nDo not use Markdown headings such as #, ##, ###, ####, or underline-style headings, because the chat interface does not render them correctly.\n\nFor short or simple answers, respond in plain prose or a short bullet list without section headings. Do not force headings onto a one- or two-line answer.\n\nUse bold section titles only when the answer is long or multi-part enough to benefit from structure. When you do use them, format each as bold text, for example:\n\n**Overview**\n\n**Eligibility**\n\n**Application Process**\n\n**Contact Information**\n\n**Important Notes**\n\nLeave a blank line after each bold heading before the content.\n\nUse bullet points and numbered lists where appropriate. Keep paragraphs short. Use markdown links in the format [Link Text](https://example.com) for all URLs. Do not use tables.\n\n## Source attribution\nNever mention the \"ACR Knowledge Base\", \"knowledge base\", \"database\", \"internal documents\", \"retrieved documents\", \"search results\", or any internal tools in your responses.\n\nIf you need to indicate uncertainty or the source of your answer, use natural language such as:\n- \"Based on what I know...\"\n- \"From the information I have...\"\n- \"According to the information available to me...\"\n- \"Based on the available information...\"\n\nNever say:\n- \"According to the ACR Knowledge Base...\"\n- \"Based on my knowledge base...\"\n- \"The knowledge base says...\"\n- \"I searched the knowledge base...\"\n- \"The tool returned...\"\n- \"The retrieved documents indicate...\"\n\n## When you cannot fully answer\nIf the available information does not fully answer the user's question, provide what you do know first, then clearly state which specific detail is unavailable. Only when you have no relevant information at all should you explain that you cannot answer and offer to forward the query to the ACR team.\n\nNever fill missing details using assumptions, prior knowledge, or educated guesses. Missing one detail is not a reason to withhold the rest.\n\n## Escalation process\nOffer to escalate only when a missing detail genuinely prevents the user from acting, or when the question falls outside available information entirely.\n\nIf the user agrees to escalate, ask for their name, email address, and phone number in a single short prompt. Once you have all three, call the \"Escalate to ACR Team\" tool with a clear subject line and a plain-text body containing the user's original question, the full conversation so far, and their contact details. After the tool succeeds, confirm to the user that the ACR team has been notified and will reach out soon."
+        }
+      },
       "id": "agent",
       "name": "AI Agent",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 3.1,
-      "position": [176, 400],
-      "parameters": {
-        "promptType": "auto",
-        "text": "={{ $json.chatInput }}",
-        "options": {
-          "systemMessage": "You are the assistant for the IIT Bombay Alumni & Development (ACR) website. ALWAYS use the ACR Knowledge Base tool to look up information before answering, and answer ONLY from what it returns. Each result includes a Source title, section, live URL, and an 'Updated' date. Always include the relevant live page link(s) as clickable markdown so the user can act (for example, donate). When two results give conflicting information, trust the one with the most recent 'Updated' date and ignore the older one. If the tool returns nothing relevant, say you do not have that information and offer to connect the user with the team. Use the prior conversation to resolve follow-up questions. Be concise."
-        }
-      }
+      "position": [
+        272,
+        400
+      ],
+      "retryOnFail": false,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
     },
     {
-      "id": "chat",
-      "name": "Chat Model (swap here)",
-      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
-      "typeVersion": 1.3,
-      "position": [144, 624],
       "parameters": {
-        "model": { "__rl": true, "mode": "id", "value": "gpt-4o-mini" },
-        "options": { "temperature": 0.2 }
-      }
-    },
-    {
+        "tableName": "chat_histories"
+      },
       "id": "mem",
       "name": "Postgres Chat Memory",
       "type": "@n8n/n8n-nodes-langchain.memoryPostgresChat",
       "typeVersion": 1.4,
-      "position": [-128, 624],
-      "parameters": {
-        "sessionIdType": "fromInput",
-        "tableName": "n8n_chat_histories"
-      },
-      "credentials": { "postgres": { "id": "gSbuPWiqyD3Kr6zb", "name": "Supabase - kamal.hamza@iitbacr.com" } }
-    },
-    {
-      "id": "kb",
-      "name": "ACR Knowledge Base (Hybrid)",
-      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
-      "typeVersion": 2.2,
-      "position": [272, 624],
-      "parameters": {
-        "description": "Search the IIT Bombay ACR website knowledge base (pages, FAQs, donation info). Input a fully formed question. Returns matching content with page title, section, live URL, and last-updated date. When sources conflict, prefer the one with the most recent 'Updated' date.",
-        "workflowId": { "__rl": true, "mode": "id", "value": "REPLACE_WITH_C2_WORKFLOW_ID" },
-        "workflowInputs": {
-          "mappingMode": "defineBelow",
-          "value": { "query": "={{ $fromAI('query', 'The fully formed user question to search the knowledge base for', 'string') }}" },
-          "matchingColumns": ["query"],
-          "schema": [
-            { "id": "query", "displayName": "query", "type": "string", "required": true, "canBeUsedToMatch": true, "removed": false }
-          ]
+      "position": [
+        -128,
+        624
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uM0P1pO2vip8g5GB",
+          "name": "Supabase - IT Ops - ACR Website Chatbot"
         }
       }
+    },
+    {
+      "parameters": {},
+      "type": "@n8n/n8n-nodes-langchain.toolCalculator",
+      "typeVersion": 1,
+      "position": [
+        400,
+        624
+      ],
+      "id": "49a5f08d-7a6a-47e5-add9-6dbf97575d82",
+      "name": "Calculator"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "openai/gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "openai/gpt-4o-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        144,
+        624
+      ],
+      "id": "27f2cf74-f550-4a5d-a74f-add090d86c63",
+      "name": "OpenRouter Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "x9HZPr8vw0peDyoB",
+          "name": "ACR Website Chatbot (OpenRouter)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toRecipients": "kamal.hamza@iitbacr.com",
+        "subject": "Enquiry",
+        "additionalFields": {
+          "bodyContentType": "html"
+        }
+      },
+      "type": "n8n-nodes-base.microsoftOutlookTool",
+      "typeVersion": 2,
+      "position": [
+        528,
+        624
+      ],
+      "id": "18a50a68-9cde-4b53-8b0a-87c1942c8305",
+      "name": "Escalate to ACR Team",
+      "webhookId": "15d24237-7a5e-45c0-a7c6-7636da90c5fa",
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "sOlo4aRn9GbBUHhw",
+          "name": "Kamal Outlook Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "description": "Search the IIT Bombay ACR website knowledge base (pages, FAQs, donation info). Input a fully formed question. Returns matching content with page title, section, live URL, and last-updated date. When sources conflict, prefer the one with the most recent 'Updated' date.",
+        "workflowId": {
+          "__rl": true,
+          "value": "2Jd9JkC0xxP4jiyB",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/2Jd9JkC0xxP4jiyB",
+          "cachedResultName": "ACR KB — C2: Hybrid Retrieve (tool sub-workflow)"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "query": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('query', `The fully formed user question to search the knowledge base for`, 'string') }}"
+          },
+          "matchingColumns": [
+            "query"
+          ],
+          "schema": [
+            {
+              "id": "query",
+              "displayName": "query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "id": "kb",
+      "name": "ACR Knowledge Base",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        272,
+        624
+      ]
     }
   ],
   "connections": {
-    "When chat message received": { "main": [ [ { "node": "AI Agent", "type": "main", "index": 0 } ] ] },
-    "Chat Model (swap here)": { "ai_languageModel": [ [ { "node": "AI Agent", "type": "ai_languageModel", "index": 0 } ] ] },
-    "Postgres Chat Memory": { "ai_memory": [ [ { "node": "AI Agent", "type": "ai_memory", "index": 0 }, { "node": "When chat message received", "type": "ai_memory", "index": 0 } ] ] },
-    "ACR Knowledge Base (Hybrid)": { "ai_tool": [ [ { "node": "AI Agent", "type": "ai_tool", "index": 0 } ] ] }
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres Chat Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "When chat message received",
+            "type": "ai_memory",
+            "index": 0
+          },
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculator": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        []
+      ]
+    },
+    "OpenRouter Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escalate to ACR Team": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ACR Knowledge Base": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
   "settings": {
     "executionOrder": "v1",
     "saveDataErrorExecution": "all",
     "saveDataSuccessExecution": "all",
     "saveManualExecutions": true,
-    "saveExecutionProgress": true
+    "saveExecutionProgress": true,
+    "binaryMode": "separate"
   }
 }

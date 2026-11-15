@@ -1,0 +1,7 @@
+requests
+lxml
+markdownify
+pymupdf4llm
+pyyaml
+fastapi==0.115.6  # app.py import (BOILERPLATE_XPATH)
+pydantic

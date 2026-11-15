@@ -1,16 +1,8 @@
 {
   "id": "XLnhEqr9EQV7QPZs",
-  "name": "ACR KB \u2014 A: Sync (WP \u2192 Supabase)",
+  "name": "ACR KB — A: Sync (WP → Supabase)",
   "nodes": [
     {
-      "id": "trigger",
-      "name": "Every 6h",
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.2,
-      "position": [
-        0,
-        300
-      ],
       "parameters": {
         "rule": {
           "interval": [
@@ -20,148 +12,157 @@
             }
           ]
         }
-      }
+      },
+      "id": "trigger",
+      "name": "Every 6h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        -176
+      ]
     },
     {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SET search_path TO acr_website_chatbot;\nSELECT (SELECT value FROM sync_state WHERE key = 'last_sync' LIMIT 1) AS value, (SELECT COALESCE(array_agg(path), ARRAY[]::text[]) FROM kb_blocklist) AS blocklist;",
+        "options": {}
+      },
       "id": "getwm",
       "name": "Get Watermark",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        220,
-        300
+        224,
+        -176
       ],
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT value FROM sync_state WHERE key = 'last_sync' LIMIT 1;",
-        "options": {}
+      "credentials": {
+        "postgres": {
+          "id": "uM0P1pO2vip8g5GB",
+          "name": "Supabase - IT Ops - ACR Website Chatbot"
+        }
       }
     },
     {
-      "id": "fetch",
-      "name": "Fetch & Extract",
+      "parameters": {
+        "jsCode": "// Enumerate content-bearing WP REST types; emit ONE item per post (lightweight metadata).\n// Collect ALL types first, sort GLOBALLY by modified asc, then take the oldest BATCH.\n// Why: the global watermark must cover EVERY type. A type-major cap (fill 500 from 'pages'\n// then advance the watermark) strands older items in later types behind the pages watermark.\nconst types = ['pages','posts','campaign','causes','awards','alumni_story','news','csr','allstory','casestudy','events_list','annual_report','annual_contributors','legacy_project','batch_legacy','jobs','dean_desk','dean_circle','leadership_circle','giving_circle','chairman_circle','director_circle'];\nconst base = 'https://acr.iitbombay.org/wp-json/wp/v2/';\nconst since = ($json.value ? String($json.value) : '1970-01-01T00:00:00');\nconst BATCH = 500; // memory throttle: N oldest-by-modified per run; watermark advances so re-runs resume.\nconst all = [];\nfor (const t of types) {\n  let page = 1;\n  while (true) {\n    let items;\n    try {\n      items = await this.helpers.httpRequest({\n        method: 'GET', url: base + t, json: true,\n        qs: { status: 'publish', per_page: 100, page, modified_after: since, orderby: 'modified', order: 'asc', _fields: 'id,link,title,modified,status' }\n      });\n    } catch (e) { break; }\n    if (!Array.isArray(items) || items.length === 0) break;\n    for (const it of items) {\n      if (it.id === 2) continue; // Sample Page\n      const path = (() => { try { return new URL(it.link).pathname.replace(/\\/$/, ''); } catch { return String(it.link || '').replace(/\\/$/, ''); } })();\n      const title = (it.title && it.title.rendered) ? it.title.rendered : '';\n      all.push({ json: { post_id: it.id, source_type: t, url: it.link, path, title, modified: it.modified } });\n    }\n    if (items.length < 100) break;\n    page++;\n  }\n}\n// Global oldest-first sort so the batch + watermark span ALL types uniformly.\nall.sort((a, b) => (a.json.modified < b.json.modified ? -1 : a.json.modified > b.json.modified ? 1 : 0));\n// Cap to BATCH, but extend to include ALL items sharing the boundary timestamp so no tie is\n// stranded when the watermark (exclusive modified_after) advances past that second.\nlet end = Math.min(BATCH, all.length);\nwhile (end < all.length && all[end].json.modified === all[end - 1].json.modified) end++;\nconst batch = all.slice(0, end);\n// Watermark = newest modified in the batch. Safe: every item across ALL types with\n// modified <= this was included, so nothing older is skipped next run.\nconst finalMax = batch.length ? batch[batch.length - 1].json.modified : since;\nfor (const o of batch) o.json._maxModified = finalMax;\nreturn batch;"
+      },
+      "id": "enum",
+      "name": "Enumerate WP",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        440,
-        300
-      ],
-      "parameters": {
-        "jsCode": "// Content-bearing WP REST types (edit list to add/remove CPTs)\nconst types = ['pages','posts','campaign','causes','awards','alumni_story','news','csr','allstory','casestudy','events_list','annual_report','annual_contributors','legacy_project','batch_legacy','jobs','dean_desk','dean_circle','leadership_circle','giving_circle','chairman_circle','director_circle'];\nconst base = 'https://acr.iitbombay.org/wp-json/wp/v2/';\nconst TRAFILATURA_URL = 'http://acr-trafilatura:8000/extract'; // container name on n8n-net, internal port 8000\nconst since = ($json.value ? String($json.value) : '1970-01-01T00:00:00');\nconst out = [];\nconst MAX_ITEMS = 0; // >0 = TEST MODE: ingest only first N posts, watermark NOT advanced. 0 = full run.\nlet postCount = 0;\nlet maxMod = since;\n\n// Header-aware sectioning: split markdown on #..###### headings, carry heading.\nfunction sectionize(md) {\n  const lines = String(md).split('\\n');\n  const secs = [];\n  let cur = { heading: '', body: [] };\n  for (const ln of lines) {\n    const m = ln.match(/^(#{1,6})\\s+(.*)$/);\n    if (m) {\n      if (cur.heading || cur.body.join('').trim()) secs.push(cur);\n      cur = { heading: m[2].trim(), body: [] };\n    } else { cur.body.push(ln); }\n  }\n  if (cur.heading || cur.body.join('').trim()) secs.push(cur);\n  return secs.length ? secs : [{ heading: '', body: [String(md)] }];\n}\n\nfor (const t of types) {\n  let page = 1;\n  while (true) {\n    let items;\n    try {\n      items = await this.helpers.httpRequest({\n        method: 'GET', url: base + t, json: true,\n        qs: { status: 'publish', per_page: 100, page, modified_after: since, orderby: 'modified', order: 'asc', _fields: 'id,link,title,modified,status,content' }\n      });\n    } catch (e) { break; }\n    if (!Array.isArray(items) || items.length === 0) break;\n    for (const it of items) {\n      if (it.id === 2) continue; // Sample Page\n      // Convert WP content.rendered HTML -> Markdown via self-hosted Trafilatura service.\n      const rawHtml = (it.content && it.content.rendered) ? it.content.rendered : '';\n      let md = '';\n      if (rawHtml) {\n        try {\n          const r = await this.helpers.httpRequest({ method: 'POST', url: TRAFILATURA_URL, json: true, body: { html: rawHtml } });\n          md = (r && r.markdown) ? r.markdown : '';\n        } catch (e) { md = ''; }\n      }\n      const title = (it.title && it.title.rendered) ? it.title.rendered : '';\n      const secs = sectionize(md);\n      const outline = secs.map(s => s.heading).filter(Boolean).join(' | ');\n      let ci = 0;\n      for (const s of secs) {\n        const body = s.body.join('\\n').trim();\n        if (!body && !s.heading) continue;\n        const heading = s.heading || title;\n        // Base chunk text; the LLM contextual prefix (Phase 2) is prepended downstream.\n        const content = (title + (s.heading ? ' \\u2014 ' + s.heading : '') + '\\n\\n' + body).trim();\n        out.push({ json: { post_id: it.id, source_type: t, url: it.link, title, modified: it.modified, section_heading: heading, chunk_index: ci, outline, content } });\n        ci++;\n      }\n      if (it.modified && it.modified > maxMod) maxMod = it.modified;\n      postCount++;\n      if (MAX_ITEMS > 0 && postCount >= MAX_ITEMS) break;\n    }\n    if (MAX_ITEMS > 0 && postCount >= MAX_ITEMS) break;\n    if (items.length < 100) break;\n    page++;\n  }\n  if (MAX_ITEMS > 0 && postCount >= MAX_ITEMS) break;\n}\nconst finalMax = (MAX_ITEMS > 0) ? since : maxMod; // test mode leaves watermark untouched\nfor (const o of out) o.json._maxModified = finalMax;\nreturn out;"
-      }
+        448,
+        -176
+      ]
     },
     {
+      "parameters": {
+        "method": "POST",
+        "url": "http://acr-trafilatura:8000/extract",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"url\": $('Enumerate WP').item.json.url } }}",
+        "options": {}
+      },
+      "id": "traf",
+      "name": "Trafilatura Extract",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1344,
+        -176
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Header-aware sectioning of trafilatura markdown -> chunk items.\n// Match each Trafilatura item back to its Enumerate metadata BY URL (index-safe: a\n// Filter node upstream may drop items, so positions no longer line up).\nfunction sectionize(md) {\n  const lines = String(md).split('\\n');\n  const secs = [];\n  let cur = { heading: '', body: [] };\n  for (const ln of lines) {\n    const m = ln.match(/^(#{1,6})\\s+(.*)$/);\n    if (m) {\n      if (cur.heading || cur.body.join('').trim()) secs.push(cur);\n      cur = { heading: m[2].trim(), body: [] };\n    } else { cur.body.push(ln); }\n  }\n  if (cur.heading || cur.body.join('').trim()) secs.push(cur);\n  return secs.length ? secs : [{ heading: '', body: [String(md)] }];\n}\n// CONFIG: min real-content chars to keep a page (menu/junk pages fall below this).\nconst MIN_CONTENT_CHARS = 200;\nconst items = $input.all();\nconst byUrl = new Map($('Skip Synced').all().map(x => [x.json.url, x.json]));\nconst out = [];\nfor (let i = 0; i < items.length; i++) {\n  const md = (items[i].json && items[i].json.markdown) ? items[i].json.markdown : '';\n  const s0 = byUrl.get(items[i].json.url) || items[i].json;\n  // Backstop: skip near-empty extractions (blocklist handled by the Filter node).\n  // ponytail: char floor is a heuristic; raise if real short pages get dropped.\n  if (String(md).trim().length < MIN_CONTENT_CHARS) continue;\n  const title = s0.title || '';\n  const secs = sectionize(md);\n  const outline = secs.map(s => s.heading).filter(Boolean).join(' | ');\n  let ci = 0;\n  for (const s of secs) {\n    const body = s.body.join('\\n').trim();\n    if (!body && !s.heading) continue;\n    const heading = s.heading || title;\n    const content = (title + (s.heading ? ' — ' + s.heading : '') + '\\n\\n' + body).trim();\n    out.push({ json: { post_id: s0.post_id, source_type: s0.source_type, url: s0.url, title, modified: s0.modified, section_heading: heading, chunk_index: ci, outline, content, _maxModified: s0._maxModified } });\n    ci++;\n  }\n}\nif (out.length === 0) {\n  // ponytail: all-junk batch -> emit watermark-only sentinel so Update Watermark still advances\n  // (else the run dead-ends at 0 items and the watermark freezes on the same oldest window forever).\n  // Ceiling: an all-already-synced batch (Skip Synced=0) never reaches this node; handle if it appears.\n  const s = $('Skip Synced').first();\n  const wm = s && s.json ? s.json._maxModified : null;\n  return [{ json: { _watermark_only: true, _maxModified: wm } }];\n}\nreturn out;"
+      },
+      "id": "sect",
+      "name": "Sectionize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        -176
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SET search_path TO acr_website_chatbot;\nDELETE FROM documents WHERE (metadata::jsonb->>'source_type') <> 'faq' AND ((metadata::jsonb->>'post_id') || '|' || (metadata::jsonb->>'source_type')) = ANY(string_to_array($1, ','));",
+        "options": {
+          "queryReplacement": "={{ [...new Set($('Sectionize').all().filter(i => !i.json._watermark_only).map(i => i.json.post_id + '|' + i.json.source_type))].join(',') }}"
+        }
+      },
       "id": "del",
       "name": "Delete Changed",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        660,
-        300
+        2016,
+        0
       ],
       "executeOnce": true,
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "DELETE FROM documents WHERE metadata->>'source_type' <> 'faq' AND (metadata->>'post_id' || '|' || metadata->>'source_type') = ANY($1);",
-        "options": {
-          "queryReplacement": "={{ [ [...new Set($('Fetch & Extract').all().map(i => i.json.post_id + '|' + i.json.source_type))] ] }}"
+      "alwaysOutputData": false,
+      "credentials": {
+        "postgres": {
+          "id": "uM0P1pO2vip8g5GB",
+          "name": "Supabase - IT Ops - ACR Website Chatbot"
         }
       }
     },
     {
+      "parameters": {
+        "jsCode": "return $('Sectionize').all();"
+      },
       "id": "restore",
       "name": "Restore Items",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        880,
-        300
-      ],
-      "parameters": {
-        "jsCode": "return $('Fetch & Extract').all();"
-      }
+        2240,
+        0
+      ]
     },
     {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ \"You situate a document section for search retrieval. Reply with ONE concise sentence stating what this section covers within its page. No preamble, no quotes.\\n\\nPage title: \" + $json.title + \"\\nPage sections: \" + ($json.outline || \"n/a\") + \"\\nThis section: \" + ($json.section_heading || $json.title) + \"\\n\\nSection text:\\n\" + String($json.content).slice(0, 1500) }}",
+        "needsFallback": true,
+        "batching": {}
+      },
       "id": "ctx",
-      "name": "Contextualize (OpenAI)",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "name": "Contextualize",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
       "position": [
-        1000,
-        120
-      ],
-      "parameters": {
-        "method": "POST",
-        "url": "https://api.openai.com/v1/chat/completions",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "openAiApi",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ { \"model\": \"gpt-4o-mini\", \"temperature\": 0, \"max_tokens\": 60, \"messages\": [ { \"role\": \"system\", \"content\": \"You situate a document section for search retrieval. Reply with ONE concise sentence stating what this section covers within its page. No preamble, no quotes.\" }, { \"role\": \"user\", \"content\": \"Page title: \" + $json.title + \"\\nPage sections: \" + ($json.outline || \"n/a\") + \"\\nThis section: \" + ($json.section_heading || $json.title) + \"\\n\\nSection text:\\n\" + String($json.content).slice(0, 1500) } ] } }}",
-        "options": {}
-      }
+        2464,
+        0
+      ]
     },
     {
+      "parameters": {
+        "jsCode": "const src = $('Restore Items').all();\nconst ai = $input.all();\nreturn src.map((s, i) => {\n  let ctx = '';\n  try { ctx = String(ai[i].json.text).trim(); } catch (e) { ctx = ''; }\n  const j = { ...s.json };\n  j.context = ctx;\n  j.content = ctx ? (ctx + '\\n\\n' + j.content) : j.content;\n  return { json: j };\n});"
+      },
       "id": "merge",
       "name": "Merge Context",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1000,
-        300
-      ],
-      "parameters": {
-        "jsCode": "const src = $('Restore Items').all();\nconst ai = $input.all();\nreturn src.map((s, i) => {\n  let ctx = '';\n  try { ctx = String(ai[i].json.choices[0].message.content).trim(); } catch (e) { ctx = ''; }\n  const j = { ...s.json };\n  j.context = ctx;\n  j.content = ctx ? (ctx + '\\n\\n' + j.content) : j.content;\n  return { json: j };\n});"
-      }
+        2816,
+        0
+      ]
     },
     {
-      "id": "vstore",
-      "name": "Insert to Supabase",
-      "type": "@n8n/n8n-nodes-langchain.vectorStoreSupabase",
-      "typeVersion": 1.3,
-      "position": [
-        1120,
-        300
-      ],
       "parameters": {
-        "mode": "insert",
-        "tableName": {
-          "__rl": true,
-          "mode": "list",
-          "value": "documents"
-        },
-        "options": {
-          "queryName": "match_documents"
-        }
-      }
-    },
-    {
-      "id": "emb",
-      "name": "Embeddings (swap here)",
-      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
-      "typeVersion": 1.2,
-      "position": [
-        1040,
-        520
-      ],
-      "parameters": {
-        "model": "text-embedding-3-small",
-        "options": {}
-      }
-    },
-    {
-      "id": "loader",
-      "name": "Default Data Loader",
-      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
-      "typeVersion": 1.1,
-      "position": [
-        1200,
-        520
-      ],
-      "parameters": {
-        "dataType": "json",
         "jsonMode": "expressionData",
         "jsonData": "={{ $json.content }}",
+        "textSplittingMode": "custom",
         "options": {
           "metadata": {
             "metadataValues": [
@@ -199,72 +200,278 @@
               }
             ]
           }
-        },
-        "textSplittingMode": "custom"
-      }
+        }
+      },
+      "id": "loader",
+      "name": "Default Data Loader",
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        3168,
+        224
+      ]
     },
     {
+      "parameters": {
+        "chunkSize": 1500,
+        "chunkOverlap": 200,
+        "options": {}
+      },
       "id": "splitter",
       "name": "Recursive Text Splitter",
       "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
       "typeVersion": 1,
       "position": [
-        1360,
-        520
-      ],
-      "parameters": {
-        "chunkSize": 1500,
-        "chunkOverlap": 200,
-        "options": {}
-      }
+        3248,
+        432
+      ]
     },
     {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SET search_path TO acr_website_chatbot;\nUPDATE sync_state SET value = $1 WHERE key = 'last_sync';",
+        "options": {
+          "queryReplacement": "={{ [ $('Enumerate WP').first().json._maxModified ] }}"
+        }
+      },
       "id": "setwm",
       "name": "Update Watermark",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1560,
-        300
+        3536,
+        -176
       ],
       "executeOnce": true,
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "UPDATE sync_state SET value = $1 WHERE key = 'last_sync';",
-        "options": {
-          "queryReplacement": "={{ [ $('Fetch & Extract').first().json._maxModified ] }}"
+      "credentials": {
+        "postgres": {
+          "id": "uM0P1pO2vip8g5GB",
+          "name": "Supabase - IT Ops - ACR Website Chatbot"
         }
       }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "blk",
+              "leftValue": "={{ $('Get Watermark').item.json.blocklist }}",
+              "rightValue": "={{ $json.path.extractUrlPath() }}",
+              "operator": {
+                "type": "array",
+                "operation": "notContains",
+                "rightType": "any"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ec20772c-90f2-4ecd-bcfa-e464bbe336d2",
+      "name": "Filter Blocklist",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        -176
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "tableName": "documents",
+        "options": {
+          "columnNames": {
+            "values": {
+              "contentColumnName": "content"
+            }
+          }
+        }
+      },
+      "id": "50f21eb8-ea35-44b4-9ebe-337175fc2f23",
+      "name": "Insert to PGVector",
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePGVector",
+      "typeVersion": 1.3,
+      "position": [
+        3072,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uM0P1pO2vip8g5GB",
+          "name": "Supabase - IT Ops - ACR Website Chatbot"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-openrouter-embeddings.embeddingsOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        3040,
+        224
+      ],
+      "id": "97234ceb-1d6b-4392-9f08-9eed6962fbb1",
+      "name": "Embeddings OpenRouter",
+      "credentials": {
+        "openRouterApi": {
+          "id": "Xi9HFSqLS4FRotIs",
+          "name": "ACR Website Chatbot - Embedding"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "openai/gpt-oss-120b",
+          "mode": "list",
+          "cachedResultName": "openai/gpt-oss-120b"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        2480,
+        224
+      ],
+      "id": "c157f735-55f9-4f14-afc4-429daf9070db",
+      "name": "GPT OSS 120B",
+      "credentials": {
+        "openAiApi": {
+          "id": "x9HZPr8vw0peDyoB",
+          "name": "ACR Website Chatbot (OpenRouter)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "openai/gpt-5-nano",
+          "mode": "list",
+          "cachedResultName": "openai/gpt-5-nano"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        2608,
+        224
+      ],
+      "id": "cb0515a4-28ff-457e-8d5b-7660a98ce2e8",
+      "name": "GPT5 Nano",
+      "credentials": {
+        "openAiApi": {
+          "id": "x9HZPr8vw0peDyoB",
+          "name": "ACR Website Chatbot (OpenRouter)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SET search_path TO acr_website_chatbot;\nSELECT DISTINCT (metadata::jsonb->>'post_id') AS post_id, (metadata::jsonb->>'source_type') AS source_type, (metadata::jsonb->>'modified') AS modified FROM documents WHERE (metadata::jsonb->>'source_type') <> 'faq';",
+        "options": {}
+      },
+      "id": "c191efd0-bd3f-48de-ae7f-1dead635ba81",
+      "name": "Get Synced",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        672,
+        -176
+      ],
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "id": "uM0P1pO2vip8g5GB",
+          "name": "Supabase - IT Ops - ACR Website Chatbot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Drop pages already in DB with unchanged 'modified'; keep new + changed.\n// ponytail: modified compared as exact string; false-'changed' at worst re-embeds a few, never data loss.\nconst synced = new Map($('Get Synced').all().map(r => [String(r.json.post_id) + '|' + r.json.source_type, r.json.modified]));\nreturn $('Enumerate WP').all().filter(it => {\n  const key = String(it.json.post_id) + '|' + it.json.source_type;\n  const prev = synced.get(key);\n  return prev === undefined || prev !== it.json.modified;\n});"
+      },
+      "id": "f403cf3a-c59e-4d08-9ec0-67a1a1b2f533",
+      "name": "Skip Synced",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        -176
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json._watermark_only }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "id": "condition-1783926873205-v8jt31xrn"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "8c29ad6a-539b-4b09-b880-e323ff8311d9",
+      "name": "Route WM",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1792,
+        -176
+      ]
     }
   ],
   "connections": {
-    "Every 6h": {
-      "main": [
-        [
-          {
-            "node": "Get Watermark",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Get Watermark": {
       "main": [
         [
           {
-            "node": "Fetch & Extract",
+            "node": "Enumerate WP",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Fetch & Extract": {
+    "Trafilatura Extract": {
       "main": [
         [
           {
-            "node": "Delete Changed",
+            "node": "Sectionize",
             "type": "main",
             "index": 0
           }
@@ -286,63 +493,19 @@
       "main": [
         [
           {
-            "node": "Contextualize (OpenAI)",
+            "node": "Contextualize",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Contextualize (OpenAI)": {
+    "Contextualize": {
       "main": [
         [
           {
             "node": "Merge Context",
             "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Merge Context": {
-      "main": [
-        [
-          {
-            "node": "Insert to Supabase",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Insert to Supabase": {
-      "main": [
-        [
-          {
-            "node": "Update Watermark",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Embeddings (swap here)": {
-      "ai_embedding": [
-        [
-          {
-            "node": "Insert to Supabase",
-            "type": "ai_embedding",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Default Data Loader": {
-      "ai_document": [
-        [
-          {
-            "node": "Insert to Supabase",
-            "type": "ai_document",
             "index": 0
           }
         ]
@@ -358,6 +521,156 @@
           }
         ]
       ]
+    },
+    "Every 6h": {
+      "main": [
+        [
+          {
+            "node": "Get Watermark",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Blocklist": {
+      "main": [
+        [
+          {
+            "node": "Trafilatura Extract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Context": {
+      "main": [
+        [
+          {
+            "node": "Insert to PGVector",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert to PGVector": {
+      "main": [
+        [
+          {
+            "node": "Update Watermark",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Data Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "Insert to PGVector",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings OpenRouter": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Insert to PGVector",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT OSS 120B": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Contextualize",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT5 Nano": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Contextualize",
+            "type": "ai_languageModel",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Enumerate WP": {
+      "main": [
+        [
+          {
+            "node": "Get Synced",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Synced": {
+      "main": [
+        [
+          {
+            "node": "Skip Synced",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Synced": {
+      "main": [
+        [
+          {
+            "node": "Filter Blocklist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sectionize": {
+      "main": [
+        [
+          {
+            "node": "Route WM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route WM": {
+      "main": [
+        [
+          {
+            "node": "Update Watermark",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Delete Changed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
@@ -365,6 +678,11 @@
     "saveDataErrorExecution": "all",
     "saveDataSuccessExecution": "all",
     "saveManualExecutions": true,
-    "saveExecutionProgress": true
+    "saveExecutionProgress": true,
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "Jji6eBy_ybuhgNTLb8d14",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
   }
 }

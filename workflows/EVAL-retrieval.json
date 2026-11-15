@@ -1,74 +1,158 @@
 {
+  "id": "7AA8pq3OJaQxr7K4",
   "name": "ACR KB — EVAL: Retrieval (hit@5 / MRR)",
   "nodes": [
     {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_WITH_GOOGLE_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_WITH_SHEET_GID"
+        }
+      },
       "id": "evaltrigger",
       "name": "Evaluation Trigger",
       "type": "n8n-nodes-base.evaluationTrigger",
       "typeVersion": 4.6,
-      "position": [0, 300],
-      "parameters": {
-        "documentId": { "__rl": true, "mode": "id", "value": "REPLACE_WITH_GOOGLE_SHEET_ID" },
-        "sheetName": { "__rl": true, "mode": "id", "value": "REPLACE_WITH_SHEET_GID" }
+      "position": [
+        0,
+        304
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "sxJbiuy1ukAtM6Zw",
+          "name": "iitb.dean.acr@iitbacr.org"
+        }
       }
     },
     {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "2Jd9JkC0xxP4jiyB"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "query": "={{ $json.question }}"
+          },
+          "matchingColumns": [
+            "query"
+          ],
+          "schema": [
+            {
+              "id": "query",
+              "displayName": "query",
+              "type": "string",
+              "required": true,
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ]
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
       "id": "runretrieve",
       "name": "Run Hybrid Retrieve (C2)",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
-      "position": [240, 300],
-      "parameters": {
-        "source": "database",
-        "workflowId": { "__rl": true, "mode": "id", "value": "REPLACE_WITH_C2_WORKFLOW_ID" },
-        "workflowInputs": {
-          "mappingMode": "defineBelow",
-          "value": { "query": "={{ $json.question }}" },
-          "matchingColumns": ["query"],
-          "schema": [
-            { "id": "query", "displayName": "query", "type": "string", "required": true, "canBeUsedToMatch": true, "removed": false }
-          ]
-        },
-        "options": { "waitForSubWorkflow": true }
-      }
+      "position": [
+        240,
+        304
+      ]
     },
     {
+      "parameters": {
+        "jsCode": "const norm = (u) => String(u || '').trim().toLowerCase().replace(/\\/+$/, '');\nconst expected = norm($('Evaluation Trigger').item.json.expected_url);\nconst urls = ($json.urls || []).map(norm);\nconst idx = urls.indexOf(expected);\nreturn [{ json: {\n  question: $('Evaluation Trigger').item.json.question,\n  expected_url: expected,\n  retrieved_urls: urls,\n  hit_at_5: (expected && idx >= 0) ? 1 : 0,\n  reciprocal_rank: idx >= 0 ? 1 / (idx + 1) : 0\n} }];"
+      },
       "id": "score",
       "name": "Score hit@5 / MRR",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [480, 300],
-      "parameters": {
-        "jsCode": "const norm = (u) => String(u || '').trim().toLowerCase().replace(/\\/+$/, '');\nconst expected = norm($('Evaluation Trigger').item.json.expected_url);\nconst urls = ($json.urls || []).map(norm);\nconst idx = urls.indexOf(expected);\nreturn [{ json: {\n  question: $('Evaluation Trigger').item.json.question,\n  expected_url: expected,\n  retrieved_urls: urls,\n  hit_at_5: (expected && idx >= 0) ? 1 : 0,\n  reciprocal_rank: idx >= 0 ? 1 / (idx + 1) : 0\n} }];"
-      }
+      "position": [
+        480,
+        304
+      ]
     },
     {
-      "id": "metrics",
-      "name": "Set Metrics",
-      "type": "n8n-nodes-base.evaluation",
-      "typeVersion": 4.6,
-      "position": [720, 300],
       "parameters": {
         "operation": "setMetrics",
         "metrics": {
           "assignments": [
-            { "id": "m1", "name": "hit_at_5", "value": "={{ $json.hit_at_5 }}", "type": "number" },
-            { "id": "m2", "name": "mrr", "value": "={{ $json.reciprocal_rank }}", "type": "number" }
+            {
+              "id": "m1",
+              "name": "hit_at_5",
+              "value": "={{ $json.hit_at_5 }}",
+              "type": "number"
+            },
+            {
+              "id": "m2",
+              "name": "mrr",
+              "value": "={{ $json.reciprocal_rank }}",
+              "type": "number"
+            }
           ]
         }
-      }
+      },
+      "id": "metrics",
+      "name": "Set Metrics",
+      "type": "n8n-nodes-base.evaluation",
+      "typeVersion": 4.6,
+      "position": [
+        720,
+        304
+      ]
     }
   ],
   "connections": {
-    "Evaluation Trigger": { "main": [ [ { "node": "Run Hybrid Retrieve (C2)", "type": "main", "index": 0 } ] ] },
-    "Run Hybrid Retrieve (C2)": { "main": [ [ { "node": "Score hit@5 / MRR", "type": "main", "index": 0 } ] ] },
-    "Score hit@5 / MRR": { "main": [ [ { "node": "Set Metrics", "type": "main", "index": 0 } ] ] }
+    "Evaluation Trigger": {
+      "main": [
+        [
+          {
+            "node": "Run Hybrid Retrieve (C2)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Hybrid Retrieve (C2)": {
+      "main": [
+        [
+          {
+            "node": "Score hit@5 / MRR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score hit@5 / MRR": {
+      "main": [
+        [
+          {
+            "node": "Set Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
   "settings": {
     "executionOrder": "v1",
     "saveDataErrorExecution": "all",
     "saveDataSuccessExecution": "all",
     "saveManualExecutions": true,
-    "saveExecutionProgress": true
+    "saveExecutionProgress": true,
+    "binaryMode": "separate"
   }
 }

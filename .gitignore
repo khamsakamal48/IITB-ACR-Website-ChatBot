@@ -1,1 +1,14 @@
-/embedding-cost-estimator/markdown/*.md
+# Knowledge-base data: changes constantly, lives on the server, never in git
+/embedding-cost-estimator/markdown/
+/site-scrape/output/
+/knowledge/
+/Chatbot FAQ*.xlsx
+*.xlsx
+
+# Local / tooling
+__pycache__/
+.idea/
+.DS_Store
+
+# Separate upstream repo (Carlos-Vera/BravesChat)
+/BravesChat/
