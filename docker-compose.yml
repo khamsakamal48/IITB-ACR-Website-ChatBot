@@ -1,10 +1,13 @@
 # ACR Chatbot — knowledge service (extractor + OKF knowledge bundle API)
 #
-#   1. Put the bundle on the server:   rsync -a knowledge/ <server>:<KB_HOST_DIR>/knowledge/
+# Full runbook: README.md -> "Deploy runbook". Server layout: repo cloned into /opt/acr-chatbot,
+# data in /opt/acr-chatbot/data (git-ignored).
+#   1. Put the bundle on the server:   rsync -a knowledge/ <server>:/opt/acr-chatbot/data/knowledge/
 #   2. Create .env next to this file:  KB_TOKEN=<long random string>   (openssl rand -hex 32)
-#                                      KB_HOST_DIR=/srv/acr-chatbot     (optional, default ./data)
-#                                      KB_UID=<id -u of the dir owner>  KB_GID=<id -g>  (default 1000)
-#   3. podman compose up -d --build    (Docker: docker compose up -d --build)
+#                                      KB_UID=<id -u of the data owner>  KB_GID=<id -g>  (default 1000)
+#                                      KB_HOST_DIR=<other data dir>      (optional, default ./data)
+#   3. sudo podman rm -f acr-trafilatura   (v1 container, if it exists — stateless)
+#      sudo podman compose up -d --build    (Docker: docker compose up -d --build)
 #   4. curl -s localhost:8080/health ; curl -s -H "Authorization: Bearer $KB_TOKEN" \
 #           "localhost:8080/kb/search?q=80G" | head
 #
