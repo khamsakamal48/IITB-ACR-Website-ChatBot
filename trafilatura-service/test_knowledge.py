@@ -137,3 +137,15 @@ def test_faq_refresh_replaces_categories(client):
     ctx = client.get("/kb/context", headers=AUTH).json()["text"]
     assert "Second q?" in ctx and "ASMP" not in ctx
     assert client.put("/kb/faq", json={"rows": [{"category": "x"}]}, headers=AUTH).status_code == 422
+
+
+def test_unwritable_data_dir_fails_with_clear_message(client, tmp_path):
+    data = tmp_path / "ro"
+    data.mkdir()
+    client.mod.KB_INDEX_DB = data / "idx.sqlite"
+    data.chmod(0o555)
+    try:
+        with pytest.raises(RuntimeError, match="chown"):
+            client.mod.startup()
+    finally:
+        data.chmod(0o755)

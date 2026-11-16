@@ -466,6 +466,14 @@ def startup() -> None:
     """Build the search index on boot if it is missing or empty."""
     if not KB_DIR.exists():
         return
+    data_dir = KB_INDEX_DB.parent
+    for d in (data_dir, KB_DIR):
+        if not os.access(d, os.W_OK):
+            st = d.stat()
+            raise RuntimeError(
+                f"{d} is owned by uid {st.st_uid}:{st.st_gid} but the service runs as "
+                f"uid {os.getuid()}:{os.getgid()} and cannot write to it. On the host run: "
+                f"sudo chown -R <KB_UID>:<KB_GID> <data dir>  (README step 2), then restart.")
     try:
         with db() as con:
             n = con.execute("SELECT count(*) FROM docs").fetchone()[0]

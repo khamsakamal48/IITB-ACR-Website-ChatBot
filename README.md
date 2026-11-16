@@ -140,7 +140,16 @@ mkdir -p /opt/acr-chatbot/data
 
 # from the laptop (Drive copy works too)
 rsync -a --delete ~/acr-chatbot/knowledge/ <user>@<server>:/opt/acr-chatbot/data/knowledge/
+
+# on the server: data/ must belong to YOU, not root
+ls -lnd /opt/acr-chatbot/data /opt/acr-chatbot/data/knowledge   # want: 1000 1000 (your id -u / id -g)
+sudo chown -R "$USER:$USER" /opt/acr-chatbot/data                # fix if it shows 0 0
 ```
+
+> Create `data/` yourself **before** the first `compose up`. If the folder doesn't exist,
+> rootful podman creates it as root. The service, which runs as your user, then can't
+> write its search index and exits with `Permission denied: '/data/kb-index.lock'`.
+> The fix is always the `chown` above, followed by `sudo podman restart acr-trafilatura`.
 
 ### 3. Create `.env` next to `docker-compose.yml`
 
