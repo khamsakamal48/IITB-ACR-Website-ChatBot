@@ -1,7 +1,10 @@
-"""ACR Trafilatura extractor — HTML/URL -> clean Markdown for the KB sync (Workflow A).
-Replaces the Jina Reader call. Self-hosted, no rate limits.
-POST /extract  { "url": "..." }  OR  { "html": "<...>" }  -> { markdown, title, date, url }
+"""ACR knowledge service.
+
+POST /extract  { "url": "..." } OR { "html": "<...>" } -> { markdown, title, date, url }
+               HTML/URL -> clean Markdown for the sync (Workflow A). No auth (internal net).
+/kb/*          the OKF Markdown knowledge bundle for the chat agent — see knowledge.py.
 """
+from contextlib import asynccontextmanager
 from typing import Optional
 
 import trafilatura
@@ -9,7 +12,17 @@ from trafilatura.metadata import extract_metadata
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-app = FastAPI(title="ACR Trafilatura Extractor", version="1.0")
+import knowledge
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    knowledge.startup()          # build the search index on first boot
+    yield
+
+
+app = FastAPI(title="ACR Knowledge Service", version="2.0", lifespan=lifespan)
+app.include_router(knowledge.router)
 
 # Strip site chrome (nav/header/footer) before extraction. Content-less pages
 # (thank-you stubs, redirects) otherwise fall back to the nav menu — ~700 chars

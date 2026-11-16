@@ -1,14 +1,17 @@
-# ACR Chatbot — self-hosted services
-# Trafilatura HTML->Markdown microservice (replaces Jina Reader in Workflow A).
+# ACR Chatbot — knowledge service (extractor + OKF knowledge bundle API)
 #
-#   podman compose up -d --build        # (Docker: docker compose up -d --build)
-#   curl -s localhost:8080/health
-#   curl -s -X POST localhost:8080/extract -H 'Content-Type: application/json' \
-#        -d '{"url":"https://acr.iitbombay.org/"}' | head
+#   1. Put the bundle on the server:   rsync -a knowledge/ <server>:<KB_HOST_DIR>/knowledge/
+#   2. Create .env next to this file:  KB_TOKEN=<long random string>   (openssl rand -hex 32)
+#                                      KB_HOST_DIR=/srv/acr-chatbot     (optional, default ./data)
+#                                      KB_UID=<id -u of the dir owner>  KB_GID=<id -g>  (default 1000)
+#   3. podman compose up -d --build    (Docker: docker compose up -d --build)
+#   4. curl -s localhost:8080/health ; curl -s -H "Authorization: Bearer $KB_TOKEN" \
+#           "localhost:8080/kb/search?q=80G" | head
 #
-# Call from n8n (n8n is on n8n-net, so use the container name, no published port needed):
-#   http://acr-trafilatura:8000/extract
-# n8n elsewhere / remote: http://<this-host-ip>:8080/extract (open the port / tunnel)
+# n8n reaches it by container name on the shared network (no published port needed):
+#   http://acr-trafilatura:8000/extract      (Workflow A, unchanged)
+#   http://acr-trafilatura:8000/kb/...       (chat agent + sync jobs, Bearer KB_TOKEN)
+# The host port is bound to 127.0.0.1 only: /kb has write routes, keep it off the internet.
 
 services:
   trafilatura:
@@ -16,16 +19,23 @@ services:
     image: acr-trafilatura:latest
     container_name: acr-trafilatura
     restart: unless-stopped
+    user: "${KB_UID:-1000}:${KB_GID:-1000}"     # = owner of KB_HOST_DIR on the host (id -u / id -g)
     networks:
       - n8n_net
     ports:
-      - "8080:8000"
+      - "127.0.0.1:8080:8000"
+    environment:
+      KB_TOKEN: ${KB_TOKEN:?set KB_TOKEN in .env}
+      KB_ALLOW_DRAFTS: ${KB_ALLOW_DRAFTS:-0}     # 1 = serve unapproved topic pages (testing only)
+      KB_GIT: "1"
+    volumes:
+      - ${KB_HOST_DIR:-./data}:/data:Z
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 20s
 
 # n8n runs on the network n8n-production created. Attach to that existing network
 # (external) via its real name instead of making a new isolated one.
