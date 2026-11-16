@@ -1,257 +1,293 @@
-# ACR Website Chatbot — Self-Updating Knowledge Base (Production RAG)
+# ACR Website Chatbot — v2 (Markdown knowledge, no vector DB)
 
-AI chatbot for **IIT Bombay Alumni & Development (ACR)** — https://acr.iitbombay.org.
-Answers questions about site content and **returns the live page link** in every
-reply (e.g. "how do I donate to scholarships?" → answer + clickable donation URL).
-The knowledge base (KB) auto-syncs with the site (edits/adds/deletes on a schedule)
-plus team-authored **FAQs**. Retrieval is a **production hybrid RAG** — semantic +
-keyword, recency-aware, with contextual chunks — not naive vector search.
+Public chatbot for **IIT Bombay Alumni & Corporate Relations** — https://acr.iitbombay.org.
+It answers visitors from **whole Markdown pages**, not vector-search chunks, so it does
+not return half an answer, and it gives the same answer every time.
 
-> **Status: build stage.** Nothing is installed yet on local or production. This
-> README is the step-by-step **deployment runbook** — follow it top to bottom.
+> **Status (16 Nov 2026)**
+>
+> | Phase | What | State |
+> |---|---|---|
+> | 0 | Repo + tooling housekeeping | ✅ done |
+> | 1 | Knowledge bundle: website + team FAQ → OKF Markdown | ✅ done |
+> | 2 | 52 compiled topic pages | ✅ drafted · ⏳ **team review** |
+> | 3 | Knowledge service (container) | ✅ built & tested · ⏳ **deploy (this README)** |
+> | 4 | n8n chat workflow (Gemini Flash, guardrails, memory, logging) | ⏳ waits for a Gemini API credential |
+> | 5 | Sync workflows write files instead of embeddings | ⏳ |
+> | 6 | Evaluation + soft launch, then retire v1 | ⏳ |
+>
+> **Prod still runs the v1 vector-RAG workflows** until Phase 6. Their docs, SQL and
+> checklist are in [`legacy-v1/`](legacy-v1/). Deploying the Phase 3 container does
+> **not** affect them: `POST /extract`, which v1 Workflow A uses, is unchanged.
 
-## Architecture
+---
+
+## How it works
 
 ```
-INGEST (Workflow A, every 6h)
-  WordPress REST API ─► n8n "Fetch & Extract"
-     (content.rendered)      │  POST html ─► Trafilatura service ─► Markdown
-                             │  header-aware sectionize (carry section_heading)
-                             ▼
-                       Contextualize (LLM: 1-sentence context per chunk)
-                             ▼
-                       embed (text-embedding-3-small) ─► Supabase documents
-                             (content, metadata{url,title,modified,section_heading,context}, embedding, fts)
-
-RETRIEVE (Workflow C — chat)
-  User (chat widget) ─► Chat Trigger ─► AI Agent ─► streamed answer + live links
-                                           ├─ Chat Model sub-node (gpt-4o-mini)
-                                           ├─ Postgres Chat Memory (per-session)
-                                           └─ KB tool ─► C2 sub-workflow:
-                                                embed query ─► hybrid_search() RPC
-                                                (vector + BM25 → RRF → recency decay) ─► top-5
+             ┌──── same for every chat turn (cached by Gemini, ~32K tokens) ────┐
+             │ rules + tone │ all 211 FAQ answers │ index of approved topics   │
+             └──────────────────────────────────────────────────────────────────┘
+WordPress widget ─► n8n chat (Phase 4) ─► guardrails ─► AI Agent · Gemini Flash
+   (BravesChat)                                   │   ├─ Postgres chat memory
+                                                  │   ├─ tool: search  ─┐
+                                                  │   ├─ tool: read    ─┼─► acr-knowledge service
+                                                  │   └─ tool: browse  ─┘   (Markdown files on disk)
+                                                  └─► link/email allow-list ─► log ─► reply
 ```
 
-- **Source of truth = WordPress REST API** (`/wp-json/wp/v2/...`): stable `id`,
-  live `link`, `modified`, `status` → reliable change-detection, no WP plugin.
-  Content spans **22 custom post types**.
-- **Extraction = self-hosted Trafilatura service** (`trafilatura-service/`,
-  FastAPI in Docker). WP `content.rendered` HTML → clean Markdown with headings +
-  links. Replaces Jina Reader — **no rate limits**.
-- **Chunking = header-aware.** Split Markdown on `#`/`##`/`###`, one chunk per
-  section, `section_heading` + `chunk_index` carried in metadata.
-- **Contextual retrieval** (Anthropic technique): a cheap LLM writes a 1-sentence
-  context per chunk, prepended before embedding → big hit-rate gain on isolated chunks.
-- **Store = Supabase (pgvector).** `documents(id, content, metadata jsonb,
-  embedding, fts)`. `fts` = generated `tsvector` for keyword/BM25. Structured
-  fields live in `metadata`; citations from `metadata.url`/`title`; recency from
-  `metadata.modified`.
-- **Hybrid retrieval = `hybrid_search()` SQL RPC:** semantic (pgvector cosine) +
-  keyword (BM25 `ts_rank`) fused with **Reciprocal Rank Fusion**, then multiplied
-  by a **recency time-decay** (`exp(-λ·age_days)`) so a newer page beats an older
-  one on ties. No external reranker.
-- **Chat = AI Agent + memory.** Chat Trigger (public embeddable widget) → AI Agent.
-  KB is a **tool** (C2 sub-workflow). **Postgres Chat Memory** in
-  `n8n_chat_histories`, per-visitor session.
-- **Pluggable models:** embeddings/LLM are swappable (see [Swapping models](#swapping-models)).
-  Defaults: `text-embedding-3-small` (1536-dim) + `gpt-4o-mini`.
+**Knowledge in three layers.** Higher layers win when they disagree:
+
+| Layer | Folder | Written by | Count |
+|---|---|---|---|
+| **FAQ** | `faq/` | The team, in the FAQ sheet | 211 answers, 27 categories |
+| **Topic pages** | `concepts/` | AI from the website + FAQ, then **approved by the team** | 52 |
+| **Website pages** | `sources/<type>/` | The site, one file per WordPress item | 1,962 |
+
+- **Format:** [Open Knowledge Format (OKF) v0.2](https://www.marktechpost.com/2026/06/16/google-cloud-introduces-open-knowledge-format-okf-a-vendor-neutral-markdown-spec-for-giving-ai-agents-curated-context/).
+  Each file is plain Markdown with a small YAML header (`type`, `title`, `description`,
+  `sources`, `verified`, `status`, …), and pages link to each other with normal Markdown
+  links. This is Karpathy's "LLM wiki" pattern in Google's file format.
+- **Updates replace files.** When a page changes on WordPress, its file is overwritten.
+  There's no chunking and no re-embedding. Topic pages built from that page are flagged
+  `stale` so they can be rewritten and re-approved.
+- **Search is lexical** (SQLite FTS5 / BM25). It only tells the agent which pages to
+  open, and the agent always reads the whole page.
+- **Unapproved topic pages are never served.** A topic page reaches the bot only once
+  its header says `verified: true`.
 
 ## Repo layout
 
 ```
 .
-├── README.md                  ← this file (deploy runbook)
-├── RAG-Architecture-Plan.md   ← production RAG design + phase status
-├── KB-Chatbot-Plan.md         ← original KB/sync design doc
-├── schema.sql                 ← base Supabase DDL (run FIRST)
-├── phase0-hybrid.sql          ← hybrid retrieval migration (run SECOND)
-├── docker-compose.yml         ← Trafilatura service
-├── trafilatura-service/       ← FastAPI HTML→Markdown microservice
-│   ├── app.py  ├── Dockerfile  └── requirements.txt
-├── eval-dataset.csv           ← starter eval questions (paste into Google Sheet)
-└── workflows/                 ← n8n workflows as code
-    ├── A-sync-wp-to-supabase.json    (ingest)
-    ├── A2-deletion-reconcile.json    (orphan delete)
-    ├── B-faq-ingestion.json          (FAQ refresh)
-    ├── C-chatbot-rag-webhook.json    (chat agent)
-    ├── C2-retrieve-hybrid.json       (hybrid retrieval tool sub-workflow)
-    └── EVAL-retrieval.json           (hit@5 / MRR eval harness)
+├── README.md                     ← this file (v2 overview + deploy runbook)
+├── docker-compose.yml            ← the knowledge service container
+├── trafilatura-service/          ← knowledge service (FastAPI)
+│   ├── app.py                       POST /extract (HTML → Markdown, used by sync)
+│   ├── knowledge.py                 /kb/* API for the chat agent and sync jobs
+│   ├── okf.py                       OKF file formats (shared with tools/build_okf.py)
+│   ├── API.md                       endpoint reference
+│   ├── test_knowledge.py            tests (pytest)
+│   └── Dockerfile, requirements.txt
+├── site-scrape/scrape_site.py    ← full-site scraper: WordPress REST + PDFs → Markdown
+├── tools/
+│   ├── build_okf.py              ← scrape output + FAQ sheet → knowledge bundle
+│   └── make_review_doc.py        ← topic pages → one Word file for team review
+├── workflows/                    ← n8n workflow JSONs (currently v1; rewired in Phases 4–5)
+├── legacy-v1/                    ← v1 vector-RAG runbook, SQL, plans (prod until cutover)
+└── BravesChat/                   ← WordPress chat-widget plugin (separate upstream repo, git-ignored)
 ```
 
-## Workflows
-
-| # | Name | Trigger | Job |
-|---|------|---------|-----|
-| A | KB Sync | every 6h | Fetch changed items (22 types) → Trafilatura → sectionize → contextualize → embed → upsert. Watermarked (`modified_after`). |
-| A2 | Deletion Reconcile | nightly | Live published IDs vs KB → delete orphans. |
-| B | FAQ Ingestion | daily | Full-refresh FAQs from a Google Sheet. |
-| C | Chatbot RAG (Agent + Memory) | chat widget | Chat Trigger → AI Agent + Postgres memory; KB tool = C2. Streams answers, cites live links, prefers most-recent on conflict. |
-| C2 | Hybrid Retrieve (tool) | called by C | Embed query → `hybrid_search()` → formatted top-5 (+`urls` for eval). |
-| EVAL | Retrieval eval | manual | Runs a Google-Sheet question set through C2 → logs `hit@5`/`MRR` to n8n Evaluations tab. |
+**Never in git** (`.gitignore`): the knowledge bundle (`knowledge/`), the scrape output, the
+FAQ spreadsheet, the review `.docx`, `.env` and `data/`. They're live content and
+contain published bank details, so they're copied to the server, not committed.
 
 ---
 
-# Deployment runbook
+# Deploy runbook — knowledge service (Phase 3)
 
-Two targets: **Local** (test on your machine) and **Production** (`n8n.iitbacr.space`).
-Steps are identical except where a 🖥️ **LOCAL** / ☁️ **PROD** note calls out a difference.
+Run this on the n8n prod server (`n8n.iitbacr.space`, rootful podman). It replaces
+the existing `acr-trafilatura` container with the extended one. Same name, same network,
+and `/extract` behaves exactly as before.
 
-## Prerequisites
+### What you need
 
-- **Docker + Docker Compose** (for Trafilatura; and for local n8n).
-- **Supabase project** (cloud, or local `supabase` stack). Note its **DB
-  connection** (host/port/db/user/password) and **project URL + service_role key**.
-- **OpenAI API key** (embeddings + LLM + contextual prefix). ⚠️ Currently the
-  **missing piece** — every AI step needs it.
-- **Google account** (Sheets) for FAQ (B) and the eval dataset.
-- n8n:
-  - 🖥️ **LOCAL** — run n8n in Docker (Step 3).
-  - ☁️ **PROD** — existing instance at `https://n8n.iitbacr.space`.
+- SSH to the server, with `sudo podman` and `podman compose` (or `docker compose`).
+- The n8n network name. The compose file expects `n8n-production_n8n-net`; confirm it:
+  ```bash
+  sudo podman ps --format '{{.Names}}  {{.Networks}}' | grep -i n8n
+  ```
+- The knowledge bundle. The current build lives on Kamal's laptop at
+  `~/acr-chatbot/knowledge/`, with a copy in the project's Google Drive folder under
+  `knowledge/`. To build it from scratch instead, see [Rebuild the bundle](#rebuild-the-bundle-from-the-live-site).
 
-## Step 1 — Supabase schema
-
-In the Supabase SQL editor, run **in order**:
-
-1. `schema.sql` — extension, `documents` table, `sync_state`, `match_documents()`.
-2. `phase0-hybrid.sql` — adds `context` col, generated `fts` col, GIN/btree
-   indexes, and the `hybrid_search()` RPC.
-
-Verify: `select proname from pg_proc where proname in ('match_documents','hybrid_search');`
-returns both.
-
-## Step 2 — Trafilatura extraction service
-
-From the repo root:
+### 1. Get the code onto the server
 
 ```bash
-docker compose up -d --build
-curl -s localhost:8080/health                       # {"status":"ok"}
-curl -s -X POST localhost:8080/extract \
-     -H 'Content-Type: application/json' \
-     -d '{"url":"https://acr.iitbombay.org/"}' | head
+# first time (private repo: use an account or deploy key with read access)
+git clone https://github.com/khamsakamal48/IITB-ACR-Website-ChatBot.git ~/acr-chatbot-repo
+# later
+cd ~/acr-chatbot-repo && git pull
 ```
 
-Note the URL Workflow A will call it by:
-- 🖥️ **LOCAL** (n8n also in Docker, same network) → `http://trafilatura:8000/extract`
-- 🖥️ **LOCAL** (n8n on host, service in Docker) → `http://localhost:8080/extract`
-- ☁️ **PROD** → host the service reachable from n8n and use
-  `http://<host-ip>:8080/extract` (open the port or put behind a tunnel/HTTPS).
-  Do **not** expose it publicly without at least IP allow-listing.
+### 2. Create the data folder and copy the bundle in
 
-## Step 3 — n8n
+```bash
+# on the server
+sudo mkdir -p /srv/acr-chatbot && sudo chown "$USER:$USER" /srv/acr-chatbot
 
-- 🖥️ **LOCAL** — minimal run:
-  ```bash
-  docker run -it --rm -p 5678:5678 -v n8n_data:/home/node/.n8n docker.n8n.io/n8nio/n8n
-  ```
-  Open `http://localhost:5678`. (To share a Docker network with Trafilatura, run
-  both from one compose file or `docker network connect`.)
-- ☁️ **PROD** — already running; just import workflows + creds below.
+# from the laptop (Drive copy works too)
+rsync -a --delete ~/acr-chatbot/knowledge/ <user>@<server>:/srv/acr-chatbot/knowledge/
+```
 
-## Step 4 — Credentials (create in n8n UI, once)
+Layout on the server:
+```
+/srv/acr-chatbot/
+├── knowledge/          ← the bundle (index.md, faq/, concepts/, sources/)
+├── kb-index.sqlite     ← search index (created automatically on first start)
+└── kb-index.lock
+```
 
-| Credential | Used by |
+### 3. Create `.env` next to `docker-compose.yml`
+
+```bash
+cd ~/acr-chatbot-repo
+cat > .env <<EOF
+KB_TOKEN=$(openssl rand -hex 32)
+KB_HOST_DIR=/srv/acr-chatbot
+KB_UID=$(id -u)
+KB_GID=$(id -g)
+EOF
+chmod 600 .env
+cat .env      # copy KB_TOKEN for step 6
+```
+
+- `KB_TOKEN` is the shared secret. n8n sends it on every `/kb` call. Compose refuses to
+  start without it.
+- `KB_UID`/`KB_GID` must belong to the owner of `/srv/acr-chatbot`. The container runs as
+  that user, so files it writes stay editable by you and can be rsynced over.
+- Optional: `KB_ALLOW_DRAFTS=1` also serves **unapproved** topic pages. Use it only on a
+  test instance.
+
+### 4. Build and start
+
+```bash
+cd ~/acr-chatbot-repo
+sudo podman compose up -d --build        # recreates acr-trafilatura
+sudo podman ps --filter name=acr-trafilatura --format '{{.Names}} {{.Status}}'
+```
+
+The first start builds the search index over about 2,000 pages, which takes around 10
+seconds. The healthcheck allows 20 seconds.
+
+### 5. Verify
+
+```bash
+source .env
+curl -s localhost:8080/health                                   # {"status":"ok"}
+curl -s -o /dev/null -w '%{http_code}\n' localhost:8080/kb/context          # 401 (token required)
+curl -s -H "Authorization: Bearer $KB_TOKEN" localhost:8080/kb/context | head -c 300; echo
+curl -s -H "Authorization: Bearer $KB_TOKEN" \
+     "localhost:8080/kb/search?q=Can%20I%20donate%20by%20cheque" | python3 -m json.tool | head -20
+curl -s -X POST localhost:8080/extract -H 'Content-Type: application/json' \
+     -d '{"url":"https://acr.iitbombay.org/"}' | head -c 300; echo   # v1 Workflow A path
+```
+
+Check that n8n can reach the service by container name:
+```bash
+sudo podman exec <n8n-container> wget -qO- \
+  --header "Authorization: Bearer $KB_TOKEN" \
+  "http://acr-trafilatura:8000/kb/search?q=80G" | head -c 300; echo
+```
+
+Expected: search returns `faq/donations.md` near the top. Port 8080 answers on
+`localhost` only, because the host port is bound to `127.0.0.1` on purpose; `/kb` has write
+routes and must not be reachable from the internet.
+
+### 6. Add the n8n credential (once)
+
+In n8n, go to **Credentials → New → Header Auth**:
+
+| Field | Value |
 |---|---|
-| **Postgres** (Supabase DB) | A/A2/B watermark & SQL, **C Postgres Chat Memory**, **C2 Hybrid Search** |
-| **Supabase API** (URL + service_role) | *Insert to Supabase* vector nodes in A, B |
-| **OpenAI** (`openAiApi`) | A *Contextualize*, A/B *Embeddings*, C *Chat Model*, **C2 *Embed Query*** |
-| **Google Sheets** (OAuth) | B *Read FAQ Sheet*, EVAL *Evaluation Trigger* |
+| Name | `ACR Knowledge Service` |
+| Header name | `Authorization` |
+| Header value | `Bearer <KB_TOKEN from .env>` |
 
-## Step 5 — Import workflows + fill placeholders
+The Phase 4 chat workflow and the Phase 5 sync jobs use this credential with base URL
+`http://acr-trafilatura:8000`. See [`trafilatura-service/API.md`](trafilatura-service/API.md).
 
-Import the JSONs from `workflows/`. Then wire the IDs that only exist after import:
+### Operating it
 
-1. **Set the Trafilatura URL** — Workflow A → *Fetch & Extract* node → edit
-   `TRAFILATURA_URL` (top of the code) to the value from Step 2.
-2. **Import C2 first**, copy its **workflow ID**, then paste it into:
-   - Workflow C → *ACR Knowledge Base (Hybrid)* node → `REPLACE_WITH_C2_WORKFLOW_ID`.
-   - EVAL → *Run Hybrid Retrieve (C2)* node → `REPLACE_WITH_C2_WORKFLOW_ID`.
-3. **FAQ sheet** — Workflow B → *Read FAQ Sheet* → set spreadsheet ID
-   (cols `question`, `answer`, optional `url`).
-4. **Eval sheet** — see Step 8.
+| Task | How |
+|---|---|
+| **Logs** | `sudo podman logs -f acr-trafilatura` |
+| **Update code** | `git pull && sudo podman compose up -d --build` (data in `/srv/acr-chatbot` is kept) |
+| **Replace the whole bundle** | rsync the new `knowledge/` in (as in step 2), then `curl -X POST -H "Authorization: Bearer $KB_TOKEN" localhost:8080/kb/reindex` |
+| **History / rollback** | Every write through the API is a commit: `git -C /srv/acr-chatbot/knowledge log --oneline`. Roll back with `git -C … revert <sha>`, then `/kb/reindex`. This repo is local to the server and never pushed. |
+| **Rotate the token** | Edit `KB_TOKEN` in `.env`, run `sudo podman compose up -d`, then update the n8n credential |
+| **Rebuild the search index** | `POST /kb/reindex`, or delete `/srv/acr-chatbot/kb-index.sqlite` and restart |
+| **Backup** | `/srv/acr-chatbot/knowledge` is the only state; the index can always be rebuilt |
 
-## Step 6 — Seed the knowledge base
-
-Run **Workflow A** manually once (full backfill). This is the only heavy run;
-Trafilatura is self-hosted so no throttling. Confirm rows land:
-
-```sql
-select count(*), count(metadata->>'modified') as with_date,
-       count(context) as with_ctx from documents;
-```
-
-Then **activate** A (schedule), A2, and B.
-
-## Step 7 — Embed the chat widget
-
-Add to the WordPress site (C uses n8n's Chat Trigger):
-
-```html
-<link href="https://cdn.jsdelivr.net/npm/@n8n/chat/dist/style.css" rel="stylesheet"/>
-<script type="module">
-import { createChat } from 'https://cdn.jsdelivr.net/npm/@n8n/chat/dist/chat.bundle.es.js';
-createChat({ webhookUrl: 'https://n8n.iitbacr.space/webhook/4b32064b-25a7-499f-9d32-108760371c8f/chat' });
-</script>
-```
-- ☁️ **PROD** webhook URL as above. 🖥️ **LOCAL**: use your local Chat Trigger URL
-  (`http://localhost:5678/webhook/<id>/chat`) — copy it from C's Chat Trigger node.
-
-## Step 8 — Evaluate & tune retrieval
-
-1. New **Google Sheet**, paste `eval-dataset.csv` (cols `question`,
-   `expected_url`, `notes`). Fill the `REPLACE-*` `expected_url`s with the real
-   live pages.
-2. EVAL → *Evaluation Trigger* → pick the sheet (fills `documentId`/`sheetName`).
-3. Run EVAL. Read **`hit_at_5`** and **`mrr`** in the workflow's **Evaluations tab**.
-4. Tune in C2's *Hybrid Search* node — the `hybrid_search(...)` args:
-   `lambda` (recency strength), `rrf_k`, `full_count`. Re-run, compare. If `hit@5`
-   stays low after tuning, add a cross-encoder reranker.
+Until the Phase 5 sync is live, content updates are manual: rebuild the bundle (below),
+rsync it in and reindex.
 
 ---
 
-## Swapping models
+## Content workflow
 
-Each model is a node you change in the UI — no code edits:
+### Rebuild the bundle from the live site
 
-- **Embeddings:** A *Embeddings*, B *Embeddings*, and **C2 *Embed Query*** (an HTTP
-  call to OpenAI — change model there for C2). All three MUST use the **same**
-  embedding model as ingest, or similarity breaks.
-- **LLM (chat):** C *Chat Model* — swap for Anthropic/Google/Groq/Ollama.
-- **Contextual prefix LLM:** A *Contextualize* (HTTP node) — any cheap chat model.
+A full run takes about 30 minutes of WordPress API calls. Run it on a local disk, **not**
+inside the Google Drive folder, because Drive is very slow for thousands of small files.
 
-**Match the vector dimension to `schema.sql`.** `documents.embedding` is
-`vector(1536)`. A different-dim model (e.g. `text-embedding-3-large` = 3072)
-means altering that column and re-running A + B.
+```bash
+# 1. scrape (writes one Markdown file per page + manifest.csv)
+uv run --python 3.12 --with-requirements site-scrape/requirements.txt \
+    python -I site-scrape/scrape_site.py --out ~/acr-chatbot/scrape
+# 2. build the OKF bundle (keeps existing concepts/; regenerates faq/ and sources/)
+uv run --with pyyaml --with openpyxl python -I tools/build_okf.py \
+    --scrape ~/acr-chatbot/scrape --faq "Chatbot FAQ ACR.xlsx" --out ~/acr-chatbot/knowledge
+```
 
-## Verify / smoke test
+`build_okf.py` takes about 3 seconds. Check `python -I site-scrape/scrape_site.py --help` for
+type filters and other options.
 
-- **Ingest:** run A → `documents` fills; `metadata->>'url'`, `->>'modified'`,
-  `->>'section_heading'`, `context` all set. Edit a page, re-run → chunks
-  replaced, not duplicated. Run A again with no changes → ~0 items (watermark).
-- **Deletes:** trash a test item → run A2 → its rows gone.
-- **FAQ:** add a sheet row → run B → `metadata->>'source_type'='faq'` row appears.
-- **Retrieval:** call C2 directly with a question → returns top-5 with URLs; a
-  query about a recently-edited page ranks the fresh chunk first.
-- **Chat:** open the widget → ask "how do I donate for scholarships" → streamed
-  answer + live link. Follow-up ("for a specific department?") uses prior turn
-  (memory). Reopen widget → history reloads. One row per session in
-  `n8n_chat_histories`.
-- **Eval:** run EVAL → `hit@5`/`MRR` logged in the Evaluations tab.
+### Team review of topic pages (Phase 2)
 
-## Known limits / next steps
+1. Generate the review file:
+   ```bash
+   uv run --with pyyaml --with python-docx python -I tools/make_review_doc.py \
+       --concepts ~/acr-chatbot/knowledge/concepts --out "ACR Chatbot - Topic Pages for Review.docx"
+   ```
+2. The team marks it up in Word or Google Docs (suggested edits plus the Approve box per page).
+3. Apply the corrections to `concepts/<slug>.md` and set `verified: true` and
+   `status: current` on approved pages. Then push them to the server with rsync +
+   `/kb/reindex`, or with `PUT /kb/page`.
 
-- **OpenAI credential** must be added before A (contextualize/embed), C (chat),
-  and C2 (embed) can run. Keep embeddings = `text-embedding-3-small` to match the KB.
-- **Trafilatura fetches static HTML** (we send `content.rendered`, so no fetch —
-  but shortcode/page-builder CPTs may render thin). Spot-check a `campaign`/
-  Elementor page after first ingest; if thin, switch that path to the URL-fetch
-  variant of the service.
-- **Contextual prefix cost:** one cheap LLM call per chunk at ingest. Full
-  backfill is the only bulk cost; incremental runs touch only changed pages.
-- Not yet done: guardrails / prompt-injection defense, rate limiting, dropping the
-  widget `<script>` into the live WP theme, analytics, LLM-as-judge answer eval,
-  optional knowledge-graph layer (deferred — see `RAG-Architecture-Plan.md`).
-- Consider `git init` here for real version history.
+The current draft review file is `ACR Chatbot - Topic Pages for Review.docx` in the project
+Drive folder. Each page's **Review notes** list the conflicts found between the FAQ and the
+website (e.g. the recurring-gift minimum, the alumni count, Diamond Jubilee reunions).
 
-See `RAG-Architecture-Plan.md` for the production-RAG rationale and phase status,
-and `KB-Chatbot-Plan.md` for the original KB/sync design.
+### FAQ changes
+
+The team edits the **FAQ sheet**; nobody edits `faq/*.md` by hand. Until Workflow B is
+rewired (Phase 5), rerun `tools/build_okf.py` and rsync. Once it is rewired, Workflow B
+posts the sheet to `PUT /kb/faq`.
+
+---
+
+## Development
+
+```bash
+# service tests (run against a throwaway copy of a real bundle)
+cd trafilatura-service
+KB_TEST_SOURCE=~/acr-chatbot/knowledge \
+uv run --python 3.12 --with-requirements requirements.txt --with pytest --with httpx \
+    python -I -m pytest -q test_knowledge.py
+
+# run the service locally
+docker build -t acr-trafilatura:dev trafilatura-service
+docker run --rm -p 127.0.0.1:18080:8000 --user "$(id -u):$(id -g)" \
+    -e KB_TOKEN=dev -e KB_ALLOW_DRAFTS=1 -v ~/acr-chatbot-data:/data acr-trafilatura:dev
+#   ~/acr-chatbot-data/knowledge must contain a bundle (copy one in first)
+```
+
+n8n workflow edits follow the pull → edit → push loop in [`workflows/README.md`](workflows/README.md).
+
+## Roadmap (Phases 4–6)
+
+- **Phase 4: chat workflow.** Chat Trigger (BravesChat webhook) → input guardrails (n8n
+  Guardrails node: jailbreak, PII, off-topic) → AI Agent on **Gemini Flash** (native Google
+  Gemini Chat Model node) with tools `search`, `read`, `browse` and the existing
+  "Escalate to ACR Team" mail tool → output link/email allow-list → `chat_logs` table.
+  Memory: Postgres Chat Memory (schema `acr_website_chatbot`). Edge: rate limits,
+  allowed origins, message-length cap. **Blocked on a dedicated Gemini API credential in
+  prod n8n.**
+- **Phase 5: sync.** Workflow A → `/extract` → `PUT /kb/source`; A2 → `DELETE /kb/page`;
+  B → `PUT /kb/faq`; a new daily job rewrites `stale` topic pages (marked unverified, emailed to
+  the team for approval).
+- **Phase 6: evaluation and launch.** Golden set = the 211 FAQ questions plus their
+  alternative phrasings, scored by an LLM judge, with the same answer required on 3
+  repeat runs; plus long-tail and red-team sets. Soft-launch on one page, switch
+  BravesChat, then retire v1 (pgvector tables, C2, embedding credentials).

@@ -5,3 +5,4 @@ pymupdf4llm
 pyyaml
 fastapi==0.115.6  # app.py import (BOILERPLATE_XPATH)
 pydantic
+trafilatura==2.0.0  # app.py imports it
