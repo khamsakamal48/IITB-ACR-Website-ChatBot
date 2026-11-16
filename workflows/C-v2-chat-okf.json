@@ -1,5 +1,5 @@
 {
-  "name": "ACR Chat v2 — Gemini + OKF knowledge",
+  "name": "ACR Chat v2 — OKF knowledge (gpt-6-luna)",
   "nodes": [
     {
       "id": "webhook",
@@ -271,25 +271,31 @@
       }
     },
     {
-      "id": "gemflash",
-      "name": "Gemini 3.8 Flash",
-      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
-      "typeVersion": 1.2,
+      "id": "chatmodel",
+      "name": "Chat Model (gpt-6-luna via OpenRouter)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
       "position": [
         260,
         260
       ],
       "credentials": {
-        "googlePalmApi": {
-          "id": "apsURcCTtxKzPb77",
-          "name": "ACR Website Chatbot - Gemini"
+        "openAiApi": {
+          "id": "V8kzhjnzg317YSjL",
+          "name": "ACR Website Chatbot v2 - OpenRouter (OpenAI-compatible)"
         }
       },
       "parameters": {
-        "modelName": "models/gemini-3.5-flash-lite",
+        "model": {
+          "__rl": true,
+          "value": "openai/gpt-6-luna",
+          "mode": "id"
+        },
+        "builtInTools": {},
         "options": {
-          "temperature": 0.2,
-          "maxOutputTokens": 1500
+          "maxTokens": 1500,
+          "timeout": 30000,
+          "maxRetries": 1
         }
       }
     },
@@ -467,7 +473,7 @@
       "notes": "Why Code: allow-list every link and email in the answer and extract pages read from intermediate steps; no native node does either.",
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "// Why Code: allow-list every link and email in the answer (markdown links, bare URLs,\n// mailto, plain emails) and extract which pages the agent read — no native node does either.\nconst p = $('Prepare Input').first().json;\nconst kb = $('Get KB Context').first().json;\nlet text = String($json.output ?? '').trim();\nconst HOSTS = ['iitbombay.org', 'iitb.ac.in', 'iitbacr.com', 'sarc-iitb.org'];\nconst PREFIXES = ['https://docs.google.com/forms/'];\nconst okEmail = e => HOSTS.some(h => e.toLowerCase().endsWith('@' + h) || e.toLowerCase().endsWith('.' + h));\n// No URL() here: the Code-node sandbox lacks it, so parse the host with a regex.\nconst okUrl = u => {\n  const mail = /^mailto:([^?]+)/i.exec(u);\n  if (mail) return okEmail(decodeURIComponent(mail[1]));\n  const m = /^https?:\\/\\/([^\\/?#:@\\s]+)(?::\\d+)?(?:[\\/?#]|$)/i.exec(u);\n  if (!m) return false;\n  const host = m[1].toLowerCase();\n  return HOSTS.some(h => host === h || host.endsWith('.' + h)) || PREFIXES.some(pr => u.startsWith(pr));\n};\nconst removed = [];\ntext = text.replace(/\\[([^\\]]*)\\]\\(([^)\\s]+)\\)/g, (m, label, url) => okUrl(url) ? m : (removed.push(url), label));\ntext = text.replace(/https?:\\/\\/[^\\s)\\]>\"'<]+/g, u => {\n  const clean = u.replace(/[.,;:!?]+$/, '');\n  return okUrl(clean) ? u : (removed.push(clean), '[link removed]');\n});\ntext = text.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)+/g, e => okEmail(e) ? e : (removed.push(e), '[email removed]'));\n// Phone numbers must be grounded: present in the prompt knowledge or a tool result this turn.\nconst stepsAll = $json.intermediateSteps ?? [];\nconst evidence = String(kb.text ?? '') + ' ' + stepsAll.map(s => typeof s.observation === 'string' ? s.observation : JSON.stringify(s.observation ?? '')).join(' ');\nconst PHONE = /\\+?\\d[\\d ()\\-]{6,}\\d/g;\nconst digits = s => s.replace(/\\D/g, '');\nconst known = new Set((evidence.match(PHONE) || []).map(digits).filter(d => d.length >= 8).flatMap(d => [d, d.slice(-8)]));\nconst yearRange = /^(19|20)\\d{2}\\s*[-\\u2013]\\s*(19|20)?\\d{2}$/;\ntext = text.replace(PHONE, ph => {\n  const d = digits(ph);\n  if (d.length < 8 || yearRange.test(ph.trim())) return ph;\n  return (known.has(d) || known.has(d.slice(-8))) ? ph : (removed.push(ph), '[number removed]');\n});\nif (!text) text = \"Sorry, I couldn't put an answer together. Please try rephrasing, or write to us at dean.acr.office@iitbombay.org.\";\nconst steps = $json.intermediateSteps ?? [];\nconst pages = [];\nfor (const s of steps) {\n  let inp = s.action?.toolInput ?? {};\n  if (typeof inp === 'string') { try { inp = JSON.parse(inp); } catch { inp = {}; } }\n  if (s.action?.tool === 'read_page' && inp.path) pages.push(String(inp.path));\n}\nreturn { json: {\n  output: text, outcome: 'answered', session_id: p.sessionId, question: p.chatInput,\n  guard_flags: null, sanitized: removed.length ? { removed } : null,\n  tool_calls: steps.length, pages_read: pages, latency_ms: Date.now() - p.startedAt,\n  model: 'gemini-3.8-flash', kb_version: kb.version ?? null,\n} };"
+        "jsCode": "// Why Code: allow-list every link and email in the answer (markdown links, bare URLs,\n// mailto, plain emails) and extract which pages the agent read — no native node does either.\nconst p = $('Prepare Input').first().json;\nconst kb = $('Get KB Context').first().json;\nlet text = String($json.output ?? '').trim();\nconst HOSTS = ['iitbombay.org', 'iitb.ac.in', 'iitbacr.com', 'sarc-iitb.org'];\nconst PREFIXES = ['https://docs.google.com/forms/'];\nconst okEmail = e => HOSTS.some(h => e.toLowerCase().endsWith('@' + h) || e.toLowerCase().endsWith('.' + h));\n// No URL() here: the Code-node sandbox lacks it, so parse the host with a regex.\nconst okUrl = u => {\n  const mail = /^mailto:([^?]+)/i.exec(u);\n  if (mail) return okEmail(decodeURIComponent(mail[1]));\n  const m = /^https?:\\/\\/([^\\/?#:@\\s]+)(?::\\d+)?(?:[\\/?#]|$)/i.exec(u);\n  if (!m) return false;\n  const host = m[1].toLowerCase();\n  return HOSTS.some(h => host === h || host.endsWith('.' + h)) || PREFIXES.some(pr => u.startsWith(pr));\n};\nconst removed = [];\ntext = text.replace(/\\[([^\\]]*)\\]\\(([^)\\s]+)\\)/g, (m, label, url) => okUrl(url) ? m : (removed.push(url), label));\ntext = text.replace(/https?:\\/\\/[^\\s)\\]>\"'<]+/g, u => {\n  const clean = u.replace(/[.,;:!?]+$/, '');\n  return okUrl(clean) ? u : (removed.push(clean), '[link removed]');\n});\ntext = text.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)+/g, e => okEmail(e) ? e : (removed.push(e), '[email removed]'));\n// Phone numbers must be grounded: present in the prompt knowledge or a tool result this turn.\nconst stepsAll = $json.intermediateSteps ?? [];\nconst evidence = String(kb.text ?? '') + ' ' + stepsAll.map(s => typeof s.observation === 'string' ? s.observation : JSON.stringify(s.observation ?? '')).join(' ');\nconst PHONE = /\\+?\\d[\\d ()\\-]{6,}\\d/g;\nconst digits = s => s.replace(/\\D/g, '');\nconst known = new Set((evidence.match(PHONE) || []).map(digits).filter(d => d.length >= 8).flatMap(d => [d, d.slice(-8)]));\nconst yearRange = /^(19|20)\\d{2}\\s*[-\\u2013]\\s*(19|20)?\\d{2}$/;\ntext = text.replace(PHONE, ph => {\n  const d = digits(ph);\n  if (d.length < 8 || yearRange.test(ph.trim())) return ph;\n  return (known.has(d) || known.has(d.slice(-8))) ? ph : (removed.push(ph), '[number removed]');\n});\nif (!text) text = \"Sorry, I couldn't put an answer together. Please try rephrasing, or write to us at dean.acr.office@iitbombay.org.\";\nconst steps = $json.intermediateSteps ?? [];\nconst pages = [];\nfor (const s of steps) {\n  let inp = s.action?.toolInput ?? {};\n  if (typeof inp === 'string') { try { inp = JSON.parse(inp); } catch { inp = {}; } }\n  if (s.action?.tool === 'read_page' && inp.path) pages.push(String(inp.path));\n}\nreturn { json: {\n  output: text, outcome: 'answered', session_id: p.sessionId, question: p.chatInput,\n  guard_flags: null, sanitized: removed.length ? { removed } : null,\n  tool_calls: steps.length, pages_read: pages, latency_ms: Date.now() - p.startedAt,\n  model: 'openai/gpt-6-luna',  // keep in sync with the chat model node\n  kb_version: kb.version ?? null,\n} };"
       }
     },
     {
@@ -687,7 +693,7 @@
         ]
       ]
     },
-    "Gemini 3.8 Flash": {
+    "Chat Model (gpt-6-luna via OpenRouter)": {
       "ai_languageModel": [
         [
           {

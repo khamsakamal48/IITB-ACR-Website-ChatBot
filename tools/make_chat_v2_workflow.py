@@ -5,7 +5,12 @@ workflows/C-v2-system-prompt.md. Mirrors prod; edit here, regenerate, then push 
 """
 import json, pathlib, sys
 ROOT = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else ".")
-MODEL = "models/gemini-3.5-flash-lite"   # interim: fast; 3.8 Flash on Vertex (low thinking) planned
+# Chat model: openai/gpt-6-luna via OpenRouter on n8n's OpenAI Chat Model node (credential base URL
+# https://openrouter.ai/api/v1). n8n's own OpenRouter Chat Model node 401s on this instance even with a
+# valid key (same credential works in HTTP Request). Bake-off 2026-11-17: luna 1.8-2.7 s/call,
+# $0.0035; gemini-3.8-flash 3.5-5.4 s, $0.023; gemini-3.5-flash-lite ~2 s but misattributed contacts.
+MODEL = "openai/gpt-6-luna"
+OR_CRED = {"openAiApi": {"id": "V8kzhjnzg317YSjL", "name": "ACR Website Chatbot v2 - OpenRouter (OpenAI-compatible)"}}
 prompt = (ROOT / "workflows/C-v2-system-prompt.md").read_text().strip()
 system = ("=" + prompt +
   "\n\n# KNOWLEDGE\n{{ $('Get KB Context').first().json.text }}\n\n"
@@ -85,7 +90,8 @@ return { json: {
   output: text, outcome: 'answered', session_id: p.sessionId, question: p.chatInput,
   guard_flags: null, sanitized: removed.length ? { removed } : null,
   tool_calls: steps.length, pages_read: pages, latency_ms: Date.now() - p.startedAt,
-  model: 'gemini-3.8-flash', kb_version: kb.version ?? null,
+  model: 'MODEL_PLACEHOLDER',  // keep in sync with the chat model node
+  kb_version: kb.version ?? null,
 } };"""
 
 nodes = [
@@ -127,9 +133,10 @@ nodes = [
   "onError": "continueErrorOutput",
   "parameters": {"promptType": "define", "text": f"={{{{ {P}.chatInput }}}}",
     "options": {"systemMessage": system, "maxIterations": 6, "returnIntermediateSteps": True}}},
- {"id": "gemflash", "name": "Gemini 3.8 Flash", "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini", "typeVersion": 1.2,
-  "position": [260, 260], "credentials": GEM_CRED,
-  "parameters": {"modelName": MODEL, "options": {"temperature": 0.2, "maxOutputTokens": 1500}}},
+ {"id": "chatmodel", "name": "Chat Model (gpt-6-luna via OpenRouter)", "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+  "typeVersion": 1.3, "position": [260, 260], "credentials": OR_CRED,
+  "parameters": {"model": {"__rl": True, "value": MODEL, "mode": "id"}, "builtInTools": {},
+    "options": {"maxTokens": 1500, "timeout": 30000, "maxRetries": 1}}},
  {"id": "memory", "name": "Postgres Chat Memory", "type": "@n8n/n8n-nodes-langchain.memoryPostgresChat", "typeVersion": 1.4,
   "position": [400, 260], "credentials": PG_CRED,
   "parameters": {"sessionIdType": "customKey", "sessionKey": f"={{{{ {P}.sessionId }}}}",
@@ -151,7 +158,7 @@ nodes = [
   "parameters": {"toRecipients": "kamal.hamza@iitbacr.com", "subject": "Enquiry", "additionalFields": {"bodyContentType": "html"}}},
  {"id": "sanitize", "name": "Check Links & Emails", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [760, -60],
   "notes": "Why Code: allow-list every link and email in the answer and extract pages read from intermediate steps; no native node does either.",
-  "parameters": {"mode": "runOnceForEachItem", "jsCode": SANITIZE}},
+  "parameters": {"mode": "runOnceForEachItem", "jsCode": SANITIZE.replace("MODEL_PLACEHOLDER", MODEL)}},
  reply("Reply: Invalid Input", "invalid", "Please type your question (up to 1,000 characters) and we'll do our best to help.", [-540, 460]),
  reply("Reply: Rate Limited", "rate_limited", "You've sent quite a few messages in a short time. Please wait a few minutes and try again, or write to us at dean.acr.office@iitbombay.org.", [-100, 460]),
  reply("Reply: Blocked", "blocked", "I can only help with questions about IIT Bombay alumni, giving and ACR programmes. Could you rephrase your question?", [140, 200], flags="$json"),
@@ -173,7 +180,7 @@ conn = {
  "Input Guardrails": {"main": [[{"node": "Get KB Context", "type": "main", "index": 0}], [{"node": "Reply: Blocked", "type": "main", "index": 0}]]},
  "Gemini Flash-Lite (guardrails)": {"ai_languageModel": [[{"node": "Input Guardrails", "type": "ai_languageModel", "index": 0}]]},
  "Get KB Context": {"main": [[{"node": "AI Agent", "type": "main", "index": 0}], [{"node": "Reply: Error", "type": "main", "index": 0}]]},
- "Gemini 3.8 Flash": {"ai_languageModel": [[{"node": "AI Agent", "type": "ai_languageModel", "index": 0}]]},
+ "Chat Model (gpt-6-luna via OpenRouter)": {"ai_languageModel": [[{"node": "AI Agent", "type": "ai_languageModel", "index": 0}]]},
  "Postgres Chat Memory": {"ai_memory": [[{"node": "AI Agent", "type": "ai_memory", "index": 0}]]},
  "search_knowledge": {"ai_tool": [[{"node": "AI Agent", "type": "ai_tool", "index": 0}]]},
  "read_page": {"ai_tool": [[{"node": "AI Agent", "type": "ai_tool", "index": 0}]]},
@@ -187,7 +194,7 @@ conn = {
  "Reply: Error": {"main": [[{"node": "Respond to Widget", "type": "main", "index": 0}]]},
  "Respond to Widget": {"main": [[{"node": "Log Chat", "type": "main", "index": 0}]]},
 }
-wf = {"name": "ACR Chat v2 — Gemini + OKF knowledge", "nodes": nodes, "connections": conn,
+wf = {"name": "ACR Chat v2 — OKF knowledge (gpt-6-luna)", "nodes": nodes, "connections": conn,
       "settings": {"executionOrder": "v1", "timezone": "Asia/Kolkata", "saveDataErrorExecution": "all",
                    "saveDataSuccessExecution": "all", "executionTimeout": 55}}
 (ROOT / "workflows/C-v2-chat-okf.json").write_text(json.dumps(wf, indent=2, ensure_ascii=False) + "\n")
