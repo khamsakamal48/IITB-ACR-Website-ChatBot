@@ -20,3 +20,4 @@ __pycache__/
 # Server secrets / runtime data
 .env
 /data/
+/backups/

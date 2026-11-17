@@ -13,6 +13,8 @@ Pages are always returned **whole** (long PDFs in 30k-char windows) — never ch
 | `GET /kb/page?path=…&offset=0` | Agent tool: read one whole page. Follow `next_offset` for long documents. Review notes are stripped. | `{path,title,url,modified,content,next_offset,…}` |
 | `GET /kb/list?folder=sources/awards` | Agent tool: browse a folder listing (`concepts`, `faq`, `sources/<type>`). | `{folder, content}` |
 
+| `POST /kb/check-answer` `{answer, steps, session_id, question, started_at, model}` | After the agent, before replying. Links/emails must be on the ACR allow-list; a phone number must appear in the prompt knowledge or this turn's tool results. `steps` = the agent's `intermediateSteps` as-is. | The complete `chat_logs` record: `{output, outcome, sanitized, tool_calls, pages_read, latency_ms, model, kb_version, …}` |
+
 Unapproved topic pages (`verified: false`) are invisible to all read routes unless the
 container runs with `KB_ALLOW_DRAFTS=1` (testing only). A `stale` page stays visible —
 it is the last approved version until it is recompiled and re-approved.

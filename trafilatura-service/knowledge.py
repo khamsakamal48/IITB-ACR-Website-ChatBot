@@ -261,6 +261,130 @@ def context():
     return value
 
 
+# ---------------------------------------------------------------- answer check
+# Runs on every chat answer before it reaches the visitor (replaces an n8n Code node,
+# whose task-runner cold start cost ~2-3 s per message on a quiet site).
+ALLOWED_HOSTS = ("iitbombay.org", "iitb.ac.in", "iitbacr.com", "sarc-iitb.org")
+ALLOWED_PREFIXES = ("https://docs.google.com/forms/",)
+MD_LINK = re.compile(r"\[([^\]]*)\]\(([^)\s]+)\)")
+BARE_URL = re.compile(r"https?://[^\s)\]>\"'<]+")
+EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
+PHONE = re.compile(r"\+?\d[\d ()\-]{6,}\d")
+YEAR_RANGE = re.compile(r"^(19|20)\d{2}\s*[-–]\s*(19|20)?\d{2}$")
+HOST_OF = re.compile(r"^https?://([^/?#:@\s]+)(?::\d+)?(?:[/?#]|$)", re.I)
+FALLBACK_ANSWER = ("Sorry, I couldn't put an answer together. Please try rephrasing, "
+                   "or write to us at dean.acr.office@iitbombay.org.")
+
+
+def _ok_host(host: str) -> bool:
+    host = host.lower()
+    return any(host == h or host.endswith("." + h) for h in ALLOWED_HOSTS)
+
+
+def _ok_email(e: str) -> bool:
+    e = e.lower()
+    return any(e.endswith("@" + h) or e.endswith("." + h) for h in ALLOWED_HOSTS)
+
+
+def _ok_url(u: str) -> bool:
+    if u.lower().startswith("mailto:"):
+        from urllib.parse import unquote
+        return _ok_email(unquote(u[7:].split("?")[0]))
+    m = HOST_OF.match(u)
+    return bool(m) and (_ok_host(m.group(1)) or u.startswith(ALLOWED_PREFIXES))
+
+
+def _digits(s: str) -> str:
+    return re.sub(r"\D", "", s)
+
+
+def check_answer_text(text: str, evidence: str) -> tuple[str, list[str]]:
+    """Allow-list links and emails; keep a phone number only if it appears in the evidence
+    (prompt knowledge + this turn's tool results). Returns (clean text, removed items)."""
+    removed: list[str] = []
+
+    def md(m):
+        if _ok_url(m.group(2)):
+            return m.group(0)
+        removed.append(m.group(2))
+        return m.group(1)
+
+    def bare(m):
+        u = m.group(0)
+        clean = u.rstrip(".,;:!?")
+        if _ok_url(clean):
+            return u
+        removed.append(clean)
+        return "[link removed]"
+
+    def mail(m):
+        if _ok_email(m.group(0)):
+            return m.group(0)
+        removed.append(m.group(0))
+        return "[email removed]"
+
+    known: set[str] = set()
+    for tok in PHONE.findall(evidence):
+        d = _digits(tok)
+        if len(d) >= 8:
+            known.update((d, d[-8:]))
+
+    def phone(m):
+        ph = m.group(0)
+        d = _digits(ph)
+        if len(d) < 8 or YEAR_RANGE.match(ph.strip()) or d in known or d[-8:] in known:
+            return ph
+        removed.append(ph)
+        return "[number removed]"
+
+    text = MD_LINK.sub(md, text)
+    text = BARE_URL.sub(bare, text)
+    text = EMAIL.sub(mail, text)
+    text = PHONE.sub(phone, text)
+    return text, removed
+
+
+class CheckIn(BaseModel):
+    answer: str = ""
+    steps: list = Field(default_factory=list, description="AI Agent intermediateSteps, as-is")
+    session_id: str = ""
+    question: str = ""
+    started_at: Optional[int] = Field(None, description="epoch ms when the request arrived")
+    model: Optional[str] = None
+
+
+@router.post("/check-answer", dependencies=[Depends(require_token)])
+def check_answer(inp: CheckIn):
+    """Clean the agent's answer and return the complete chat_logs record for it."""
+    import json as _json
+    import time as _time
+    ctx = context()
+    observations, pages = [], []
+    for s in inp.steps:
+        if not isinstance(s, dict):
+            continue
+        obs = s.get("observation", "")
+        observations.append(obs if isinstance(obs, str) else _json.dumps(obs, ensure_ascii=False))
+        action = s.get("action") or {}
+        tool_input = action.get("toolInput") or {}
+        if isinstance(tool_input, str):
+            try:
+                tool_input = _json.loads(tool_input)
+            except ValueError:
+                tool_input = {}
+        if action.get("tool") == "read_page" and isinstance(tool_input, dict) and tool_input.get("path"):
+            pages.append(str(tool_input["path"]))
+    text, removed = check_answer_text(inp.answer.strip(), ctx["text"] + " " + " ".join(observations))
+    return {
+        "output": text.strip() or FALLBACK_ANSWER, "outcome": "answered",
+        "session_id": inp.session_id, "question": inp.question, "guard_flags": None,
+        "sanitized": {"removed": removed} if removed else None,
+        "tool_calls": len(inp.steps), "pages_read": pages,
+        "latency_ms": int(_time.time() * 1000) - inp.started_at if inp.started_at else None,
+        "model": inp.model, "kb_version": ctx["version"],
+    }
+
+
 @router.get("/page", dependencies=[Depends(require_token)])
 def page(path: str = Query(..., description="e.g. concepts/ways-of-giving.md"),
          offset: int = Query(0, ge=0), max_chars: int = Query(PAGE_CHARS, ge=1000, le=120_000)):

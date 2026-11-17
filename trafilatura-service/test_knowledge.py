@@ -149,3 +149,59 @@ def test_unwritable_data_dir_fails_with_clear_message(client, tmp_path):
             client.mod.startup()
     finally:
         data.chmod(0o755)
+
+
+# ---------------------------------------------------------------- answer check
+URL_CASES = {
+    "https://alumni.iitbombay.org/s/ways-to-give": True, "https://acr.iitbombay.org/": True,
+    "https://acr.iitbombay.org": True, "https://asmp.sarc-iitb.org/x": True,
+    "https://portal.iitbacr.com/pay?x=1": True, "https://docs.google.com/forms/d/e/abc/viewform": True,
+    "mailto:givingback@iitbacr.com": True,
+    "https://iitbombay.org.evil.com/": False, "https://evil.com/iitbombay.org": False,
+    "https://user@evil.com/": False, "https://acr.iitbombay.org@evil.com/": False,
+    "https://notiitbombay.org/": False, "javascript:alert(1)": False,
+    "https://docs.google.com/document/d/x": False, "mailto:x@gmail.com": False,
+    "https://evil.com:443@acr.iitbombay.org": False,
+}
+
+
+def test_url_allow_list_matches_spoofing_cases():
+    import knowledge
+    wrong = {u: want for u, want in URL_CASES.items() if knowledge._ok_url(u) != want}
+    assert not wrong, wrong
+
+
+def test_answer_text_rules():
+    import knowledge
+    evidence = "call 9122-2576-4889 or write to givingback@iitbacr.com"
+    text, removed = knowledge.check_answer_text(
+        "See [Ways to Give](https://alumni.iitbombay.org/s/ways-to-give) or [this](https://evil.com/x). "
+        "Mail givingback@iitbacr.com or scam@gmail.com. Call +91 22 2576 4889 or +1 415 555 0199. "
+        "Reports for 2023-2024 and 2019 - 20. Raw link https://bit.ly/abc.", evidence)
+    assert "[Ways to Give](https://alumni.iitbombay.org/s/ways-to-give)" in text
+    assert "https://evil.com/x" not in text and "this" in text            # label kept, link dropped
+    assert "givingback@iitbacr.com" in text and "[email removed]" in text
+    assert "+91 22 2576 4889" in text                                       # grounded (FAQ format differs)
+    assert "[number removed]" in text and "415 555 0199" not in text      # not in evidence
+    assert "2023-2024" in text and "2019 - 20" in text                      # year ranges untouched
+    assert "[link removed]" in text
+    assert set(removed) == {"https://evil.com/x", "scam@gmail.com", "+1 415 555 0199", "https://bit.ly/abc"}
+
+
+def test_check_answer_endpoint_builds_log_record(client):
+    import time
+    steps = [{"action": {"tool": "search_knowledge", "toolInput": {"q": "yff"}}, "observation": "{}"},
+             {"action": {"tool": "read_page", "toolInput": '{"path": "sources/page/young-faculty-fellowship.md"}'},
+              "observation": [{"content": "Call 022 2576 9999 for YFF."}]}]
+    r = client.post("/kb/check-answer", headers=AUTH, json={
+        "answer": "YFF: call 022 2576 9999 or 022 1111 2222. [Donate](https://portal.acr.iitbombay.org/payments)",
+        "steps": steps, "session_id": "s1", "question": "q?", "model": "openai/gpt-6-luna",
+        "started_at": int(time.time() * 1000) - 1500}).json()
+    assert "022 2576 9999" in r["output"]                                   # grounded via a tool result
+    assert "1111 2222" not in r["output"] and r["sanitized"]["removed"] == ["022 1111 2222"]
+    assert r["pages_read"] == ["sources/page/young-faculty-fellowship.md"] and r["tool_calls"] == 2
+    assert r["outcome"] == "answered" and r["model"] == "openai/gpt-6-luna" and r["kb_version"]
+    assert 1500 <= r["latency_ms"] < 10_000
+    empty = client.post("/kb/check-answer", headers=AUTH, json={"answer": "  "}).json()
+    assert empty["output"].startswith("Sorry") and empty["latency_ms"] is None
+    assert client.post("/kb/check-answer", json={"answer": "x"}).status_code == 401

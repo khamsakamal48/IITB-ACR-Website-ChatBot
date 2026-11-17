@@ -232,6 +232,49 @@ In n8n, go to **Credentials → New → Header Auth**:
 The Phase 4 chat workflow and the Phase 5 sync jobs use this credential with base URL
 `http://acr-trafilatura:8000`. See [`trafilatura-service/API.md`](trafilatura-service/API.md).
 
+### 7. Local chatbot database (chat memory + chat log)
+
+The v2 chat keeps its memory and log in a **separate `acr_chatbot` database inside the
+server's existing `n8n-postgres` container**. It sits on the same podman network as n8n, so
+queries take milliseconds instead of the ~2 s per message that round trips to Supabase cost.
+n8n's own `n8n` database is not touched. The v1 bot keeps using Supabase until it's retired.
+
+```bash
+cd /opt/acr-chatbot && git pull
+PW=$(openssl rand -hex 24)
+sudo podman exec -i n8n-postgres psql -v ON_ERROR_STOP=1 -U n8n -d postgres -v pw="$PW" \
+     < sql/v2-local-postgres.sql        # last lines: acr_chatbot | 3 | 1  (db, tables, trigger)
+echo "$PW"                              # copy for the n8n credential below, then clear your screen
+```
+
+- Safe to re-run, but **re-running resets the `acr_chatbot` password** to the new `$PW`.
+  Update the n8n credential if you do.
+- If `-U n8n` is refused, the container's superuser has another name: check
+  `sudo podman exec n8n-postgres printenv POSTGRES_USER`.
+
+Then, in n8n, go to **Credentials → New → Postgres**:
+
+| Field | Value |
+|---|---|
+| Name | `ACR Chatbot (local Postgres)` |
+| Host | `n8n-postgres` |
+| Database | `acr_chatbot` |
+| User | `acr_chatbot` |
+| Password | the `$PW` printed above |
+| Port | `5432` |
+| SSL | **Disable** (container-to-container traffic on the private podman network) |
+
+**Backups:** Supabase backed up the v1 data. This database is on your server, so include it
+in the server's backups, e.g. a nightly dump kept for 14 days. Add this line to **root's**
+crontab (`sudo crontab -e`), since podman here runs as root:
+
+```bash
+15 2 * * * mkdir -p /opt/acr-chatbot/backups && podman exec n8n-postgres pg_dump -U n8n -Fc acr_chatbot > /opt/acr-chatbot/backups/acr_chatbot-$(date +\%F).dump && find /opt/acr-chatbot/backups -name 'acr_chatbot-*.dump' -mtime +14 -delete
+```
+
+`backups/` is git-ignored (it holds chat data). Restore with
+`podman exec -i n8n-postgres pg_restore -U n8n -d acr_chatbot --clean < <file>`.
+
 ### Operating it
 
 All commands run from `/opt/acr-chatbot`.
