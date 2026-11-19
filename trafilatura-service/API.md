@@ -27,6 +27,9 @@ it is the last approved version until it is recompiled and re-approved.
 | `DELETE /kb/page?path=…` | Workflow A2 (page unpublished) | Removes page, refreshes listing + search, marks dependent topics stale. |
 | `PUT /kb/faq` `{rows:[{category, subcategory, question, alternative, answer, page}]}` | Workflow B (FAQ sheet) | Full refresh of `faq/` (removed categories deleted). |
 | `PUT /kb/page` `{path, content}` | Recompile job / applying team edits | Writes a whole OKF file (frontmatter required). |
+| `POST /kb/sync` `{since?, types?, dry_run?, max_items?}` | v2 Workflow A (every 6 h) | WordPress items modified since the last run (watermark in `/data/sync-state.json`) are re-fetched from the live site and extracted with `site-scrape/scrape_site.py`'s own code, then written; unchanged content is a no-op. New PDFs linked from changed pages are added; changed giving-circle types rebuild their roster. One git commit per run. Returns `{seen, written, unchanged, skipped, new_pdfs, rosters, stale_concepts, errors, watermark}`. A bad page is reported in `errors`, never aborts the run. |
+| `POST /kb/reconcile` `{dry_run?, min_ratio?}` | v2 Workflow A2 (nightly) | Deletes source pages whose WordPress item is no longer published. **Refuses** a type when WordPress returns < 50% of the bundle's pages for it (API outage protection); PDFs and rosters untouched. |
+| `GET /kb/sync/state` | Monitoring | Watermark + last sync / reconcile summaries. |
 | `GET /kb/stale` | Recompile job | Topic pages waiting for recompilation. |
 | `POST /kb/reindex` | Manual | Rebuilds the search index and root index. |
 

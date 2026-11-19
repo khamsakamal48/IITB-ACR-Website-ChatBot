@@ -13,6 +13,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 import knowledge
+import sync
 
 
 @asynccontextmanager
@@ -23,6 +24,7 @@ async def lifespan(_app):
 
 app = FastAPI(title="ACR Knowledge Service", version="2.0", lifespan=lifespan)
 app.include_router(knowledge.router)
+app.include_router(sync.router)
 
 # Strip site chrome (nav/header/footer) before extraction. Content-less pages
 # (thank-you stubs, redirects) otherwise fall back to the nav menu — ~700 chars

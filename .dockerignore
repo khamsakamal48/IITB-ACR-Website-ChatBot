@@ -1,0 +1,8 @@
+# Build context is the repo root; only the service + scraper code are needed.
+*
+!trafilatura-service/requirements.txt
+!trafilatura-service/*.py
+!trafilatura-service/boilerplate.txt
+!site-scrape/scrape_site.py
+trafilatura-service/test_*.py
+**/__pycache__

@@ -3,3 +3,6 @@ uvicorn[standard]==0.34.0
 trafilatura==2.0.0
 pydantic==2.10.4
 pyyaml==6.0.2
+requests==2.34.2      # sync: WordPress REST + page fetches (scrape_site)
+markdownify==1.2.4    # sync: HTML -> Markdown (scrape_site)
+pymupdf4llm==2.1      # sync: newly linked PDFs -> Markdown

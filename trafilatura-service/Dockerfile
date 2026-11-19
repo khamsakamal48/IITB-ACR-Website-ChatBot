@@ -1,3 +1,4 @@
+# Build context = repo root (docker-compose.yml), so the sync can reuse site-scrape/scrape_site.py.
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -8,10 +9,11 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && git config --system --add safe.directory /data/knowledge   # volume owned by host uid
 
-COPY requirements.txt .
+COPY trafilatura-service/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py knowledge.py okf.py ./
+COPY trafilatura-service/app.py trafilatura-service/knowledge.py trafilatura-service/okf.py \
+     trafilatura-service/sync.py trafilatura-service/boilerplate.txt site-scrape/scrape_site.py ./
 
 # /data/knowledge = the OKF bundle (mounted volume) · /data/kb-index.sqlite = search index
 ENV KB_DIR=/data/knowledge \

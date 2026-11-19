@@ -336,6 +336,25 @@ def file_name(url, post_type):
     return (p.replace("/", "__") or "home")[:150] + ".md"
 
 
+def roster_md(t, members, terms):
+    """One roster file per name-only type (giving circles). Returns (meta, markdown).
+    Shared with the knowledge service's incremental sync."""
+    label, url = ROSTER_TYPES[t]
+    year_tax = next((k for k in terms if k.startswith(t) and "year" in k), None)
+    groups = defaultdict(list)
+    for m in members:
+        for y in (m["tags"].get(year_tax) or ["Members"]):
+            groups[y].append(m["title"])
+    lines = [f"# {label} — IIT Bombay donors\n",
+             f"Members of the IIT Bombay {label} ({len(members)} names), as listed on acr.iitbombay.org.\n"]
+    for g in sorted(groups, reverse=True):
+        lines.append(f"## {label} {g}\n" if g != "Members" else f"## {label} Members\n")
+        lines += [f"- {n}" for n in sorted(set(groups[g]))] + [""]
+    meta = {"url": url, "title": label, "source_type": t, "source": "roster",
+            "modified": max(m["modified"] for m in members)[:10]}
+    return meta, "\n".join(lines)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--types", help="comma list of post types (default: all)")
@@ -426,21 +445,10 @@ def main():
 
     # 4. rosters
     for t, members in rosters.items():
-        label, url = ROSTER_TYPES[t]
-        year_tax = next((k for k in terms if k.startswith(t) and "year" in k), None)
-        groups = defaultdict(list)
-        for m in members:
-            for y in (m["tags"].get(year_tax) or ["Members"]):
-                groups[y].append(m["title"])
-        lines = [f"# {label} — IIT Bombay donors\n",
-                 f"Members of the IIT Bombay {label} ({len(members)} names), as listed on acr.iitbombay.org.\n"]
-        for g in sorted(groups, reverse=True):
-            lines.append(f"## {label} {g}\n" if g != "Members" else f"## {label} Members\n")
-            lines += [f"- {n}" for n in sorted(set(groups[g]))] + [""]
+        meta, body = roster_md(t, members, terms)
         f = out / "rosters" / f"{t}.md"
-        write_md(f, {"url": url, "title": label, "source_type": t, "source": "roster",
-                     "modified": max(m["modified"] for m in members)[:10]}, "\n".join(lines))
-        manifest.append([url, str(f.relative_to(out)), t, "ok", len(members), ""])
+        write_md(f, meta, body)
+        manifest.append([meta["url"], str(f.relative_to(out)), t, "ok", len(members), ""])
 
     # 5. linked PDFs
     if not a.no_pdf:

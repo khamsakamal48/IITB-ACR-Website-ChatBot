@@ -18,7 +18,9 @@
 
 services:
   trafilatura:
-    build: ./trafilatura-service
+    build:
+      context: .                                 # repo root: the image also needs site-scrape/scrape_site.py
+      dockerfile: trafilatura-service/Dockerfile
     image: acr-trafilatura:latest
     container_name: acr-trafilatura
     restart: unless-stopped

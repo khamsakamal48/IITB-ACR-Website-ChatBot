@@ -480,24 +480,39 @@ def put_source(inp: SourceIn):
     """Sync job (Workflow A): one changed WP item -> sources/<folder>/<slug>.md.
     Replaces the file, refreshes the folder listing and search index, and flags every
     concept built from this URL as stale. No chunking, no embedding."""
-    body = inp.markdown.strip()
-    if not body.startswith("# "):
-        body = f"# {inp.title or inp.slug}\n\n{body}"
-    meta = okf.source_doc({"url": inp.url, "title": inp.title, "post_id": inp.post_id,
-                           "published": inp.published, "modified": inp.modified,
-                           "tags": inp.tags}, body, inp.folder)
-    p = resolve(f"sources/{inp.folder}/{inp.slug}")
+    meta_in = {"url": inp.url, "title": inp.title, "post_id": inp.post_id,
+               "published": inp.published, "modified": inp.modified, "tags": inp.tags}
     with write_lock():
-        existed = p.exists()
-        okf.write_atomic(p, okf.dump(meta, body))
-        okf.write_folder_index(p.parent)
-        with _lock, db() as con:
-            _index_one(con, p)
-            stale = mark_concepts_stale(con, inp.url)
-        if not existed:
+        r = write_source(inp.folder, inp.slug, inp.markdown, meta_in)
+        okf.write_folder_index(KB_DIR / "sources" / inp.folder)
+        if r["created"]:
             okf.write_root_index(KB_DIR)
-        git_commit(f"{'update' if existed else 'add'} {rel_of(p)}")
-    return {"path": rel_of(p), "created": not existed, "stale_concepts": stale}
+        git_commit(f"{'add' if r['created'] else 'update'} {r['path']}")
+    return r
+
+
+def write_source(folder: str, slug: str, markdown: str, meta_in: dict) -> dict:
+    """Write one source page + update its search entry + flag dependent concepts stale.
+    Caller holds write_lock() and refreshes folder/root indexes + commits (so a sync batch
+    does that once, not per page)."""
+    # slugs come from URL paths and may carry %-encoded unicode (e.g. "...plus%c2%b2-ignite");
+    # resolve() below still refuses anything that escapes the bundle.
+    if not re.fullmatch(r"[a-z0-9_]+", folder) or not re.fullmatch(r"[A-Za-z0-9._%~-]+", slug.removesuffix(".md")) \
+            or slug.startswith("."):
+        raise HTTPException(400, f"bad folder/slug: {folder}/{slug}")
+    body = markdown.strip()
+    if not body.startswith("# "):
+        body = f"# {meta_in.get('title') or slug}\n\n{body}"
+    meta = okf.source_doc(meta_in, body, folder)
+    p = resolve(f"sources/{folder}/{slug}")
+    existed = p.exists()
+    if existed and p.read_text(encoding="utf-8") == okf.dump(meta, body):
+        return {"path": rel_of(p), "created": False, "changed": False, "stale_concepts": []}
+    okf.write_atomic(p, okf.dump(meta, body))
+    with _lock, db() as con:
+        _index_one(con, p)
+        stale = mark_concepts_stale(con, meta_in.get("url"))
+    return {"path": rel_of(p), "created": not existed, "changed": True, "stale_concepts": stale}
 
 
 class PageIn(BaseModel):
