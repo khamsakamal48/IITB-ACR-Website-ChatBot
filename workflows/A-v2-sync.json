@@ -1,0 +1,165 @@
+{
+  "name": "ACR v2 — A: Sync website → knowledge (every 6 h)",
+  "nodes": [
+    {
+      "id": "sched",
+      "name": "Every 6 hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6,
+              "triggerAtMinute": 45
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "sync",
+      "name": "Sync Changed Pages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        0
+      ],
+      "onError": "continueErrorOutput",
+      "notes": "POST /kb/sync: WordPress items modified since the last run -> re-extract with scrape_site -> replace sources/*.md; topic pages built from them are flagged stale. See trafilatura-service/API.md.",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "5DiC041ERvTk9E5S",
+          "name": "ACR Knowledge Service"
+        }
+      },
+      "parameters": {
+        "method": "POST",
+        "url": "http://acr-trafilatura:8000/kb/sync",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{}",
+        "options": {
+          "timeout": 1200000
+        }
+      }
+    },
+    {
+      "id": "anyerr",
+      "name": "Any Errors?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        -80
+      ],
+      "parameters": {
+        "options": {},
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "e1",
+              "leftValue": "={{ ($json.errors || []).length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "mailerr",
+      "name": "Email: Sync Problem",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [
+        740,
+        40
+      ],
+      "webhookId": "3f8a1c2e-6b4d-4e9f-a7c3-5d2b9e0f1a84",
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "sOlo4aRn9GbBUHhw",
+          "name": "Kamal Outlook Account"
+        }
+      },
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "toRecipients": "kamal.hamza@iitbacr.com",
+        "subject": "=ACR chatbot: website sync {{ $json.error ? 'FAILED' : 'had ' + ($json.errors || []).length + ' page errors' }}",
+        "bodyContent": "={{ 'The every-6-hours website → knowledge sync needs a look.\\n\\n' + ($json.error ? 'The sync call failed: ' + JSON.stringify($json.error).slice(0, 1500) : 'Pages written: ' + ($json.written || []).length + ', errors: ' + ($json.errors || []).length + '\\n\\n' + JSON.stringify($json.errors, null, 2).slice(0, 3000)) + '\\n\\nn8n workflow: ACR v2 — A: Sync website → knowledge. Details: GET /kb/sync/state on the knowledge service.' }}",
+        "additionalFields": {
+          "bodyContentType": "Text"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 6 hours": {
+      "main": [
+        [
+          {
+            "node": "Sync Changed Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sync Changed Pages": {
+      "main": [
+        [
+          {
+            "node": "Any Errors?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Email: Sync Problem",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any Errors?": {
+      "main": [
+        [
+          {
+            "node": "Email: Sync Problem",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Kolkata",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  }
+}

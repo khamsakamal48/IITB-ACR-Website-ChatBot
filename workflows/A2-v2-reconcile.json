@@ -1,0 +1,166 @@
+{
+  "name": "ACR v2 — A2: Remove unpublished pages (nightly)",
+  "nodes": [
+    {
+      "id": "sched",
+      "name": "Nightly 02:30",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 2,
+              "triggerAtMinute": 30
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "rec",
+      "name": "Reconcile With WordPress",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        0
+      ],
+      "onError": "continueErrorOutput",
+      "notes": "POST /kb/reconcile: deletes source pages no longer published on WordPress; refuses a type if WP returns < 50% of the bundle's pages (outage guard).",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "5DiC041ERvTk9E5S",
+          "name": "ACR Knowledge Service"
+        }
+      },
+      "parameters": {
+        "method": "POST",
+        "url": "http://acr-trafilatura:8000/kb/reconcile",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{}",
+        "options": {
+          "timeout": 600000
+        }
+      }
+    },
+    {
+      "id": "refused",
+      "name": "Refused Any Type?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        -80
+      ],
+      "parameters": {
+        "options": {},
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "r1",
+              "leftValue": "={{ ($json.skipped_types || []).filter(s => String(s.reason).includes('refusing')).length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "mail",
+      "name": "Email: Reconcile Problem",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [
+        740,
+        40
+      ],
+      "webhookId": "8b2d4f6a-1c3e-4a5b-9d7f-2e4c6a8b0d13",
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "sOlo4aRn9GbBUHhw",
+          "name": "Kamal Outlook Account"
+        }
+      },
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "toRecipients": "kamal.hamza@iitbacr.com",
+        "subject": "=ACR chatbot: nightly reconcile {{ $json.error ? 'FAILED' : 'refused to delete (WordPress returned too few pages)' }}",
+        "bodyContent": "={{ 'The nightly check for unpublished pages needs a look.\\n\\n' + ($json.error ? 'The call failed: ' + JSON.stringify($json.error).slice(0, 1500) : 'Nothing was deleted for these types, because WordPress returned far fewer published pages than the knowledge base holds (possible API outage or permission change):\\n\\n' + JSON.stringify($json.skipped_types, null, 2).slice(0, 3000)) + '\\n\\nn8n workflow: ACR v2 — A2: Remove unpublished pages.' }}",
+        "additionalFields": {
+          "bodyContentType": "Text"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Nightly 02:30": {
+      "main": [
+        [
+          {
+            "node": "Reconcile With WordPress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reconcile With WordPress": {
+      "main": [
+        [
+          {
+            "node": "Refused Any Type?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Email: Reconcile Problem",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refused Any Type?": {
+      "main": [
+        [
+          {
+            "node": "Email: Reconcile Problem",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Kolkata",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  }
+}
