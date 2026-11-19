@@ -299,27 +299,71 @@ def _digits(s: str) -> str:
     return re.sub(r"\D", "", s)
 
 
-def check_answer_text(text: str, evidence: str) -> tuple[str, list[str]]:
-    """Allow-list links and emails; keep a phone number only if it appears in the evidence
-    (prompt knowledge + this turn's tool results). Returns (clean text, removed items)."""
+def _norm_url(u: str) -> str:
+    return re.sub(r"^(https?:)?//(www\.)?", "", u.rstrip(".,;:!?)")).rstrip("/").lower()
+
+
+_known_cache: dict = {}
+
+
+def known_links() -> tuple[set, set]:
+    """Every URL and email written anywhere in the bundle. A link in an answer must be one
+    of these (or appear in this turn's tool results): an allowed domain alone is not enough,
+    the model once invented acr.iitbombay.org/causes/udaan/ (404)."""
+    try:
+        key = KB_INDEX_DB.stat().st_mtime_ns
+    except OSError:
+        key = None
+    if _known_cache.get("key") != key or key is None:
+        urls, emails, phones = set(), set(), set()
+        for p in KB_DIR.glob("**/*.md"):
+            s = p.read_text(encoding="utf-8", errors="replace")
+            urls.update(_norm_url(u) for u in BARE_URL.findall(s))
+            emails.update(e.lower().rstrip(".") for e in EMAIL.findall(s))
+            for tok in PHONE.findall(s):
+                d = _digits(tok)
+                if len(d) >= 8:
+                    phones.update((d, d[-8:]))
+        _known_cache.update(key=key, urls=urls, emails=emails, phones=phones)
+    return _known_cache["urls"], _known_cache["emails"]
+
+
+def known_phones() -> set:
+    known_links()
+    return _known_cache.get("phones", set())
+
+
+def check_answer_text(text: str, evidence: str, ground_links: bool = True) -> tuple[str, list[str]]:
+    """Links and emails must be on the ACR allow-list AND exist in the knowledge (bundle or
+    this turn's evidence); a phone number must appear in the evidence (prompt knowledge +
+    tool results). Returns (clean text, removed items)."""
     removed: list[str] = []
+    if ground_links:
+        k_urls, k_emails = known_links()
+        k_urls = k_urls | {_norm_url(u) for u in BARE_URL.findall(evidence)}
+        k_emails = k_emails | {e.lower().rstrip(".") for e in EMAIL.findall(evidence)}
+    url_ok = (lambda u: _ok_url(u) and (u.lower().startswith("mailto:") or _norm_url(u) in k_urls)) \
+        if ground_links else _ok_url
+    email_ok = (lambda e: _ok_email(e) and e.lower().rstrip(".") in k_emails) if ground_links else _ok_email
 
     def md(m):
-        if _ok_url(m.group(2)):
+        target = m.group(2)
+        ok = email_ok(target[7:].split("?")[0]) if target.lower().startswith("mailto:") else url_ok(target)
+        if ok:
             return m.group(0)
-        removed.append(m.group(2))
+        removed.append(target)
         return m.group(1)
 
     def bare(m):
         u = m.group(0)
         clean = u.rstrip(".,;:!?")
-        if _ok_url(clean):
+        if url_ok(clean):
             return u
         removed.append(clean)
         return "[link removed]"
 
     def mail(m):
-        if _ok_email(m.group(0)):
+        if email_ok(m.group(0)):
             return m.group(0)
         removed.append(m.group(0))
         return "[email removed]"
@@ -329,6 +373,9 @@ def check_answer_text(text: str, evidence: str) -> tuple[str, list[str]]:
         d = _digits(tok)
         if len(d) >= 8:
             known.update((d, d[-8:]))
+
+    if ground_links:          # a number written anywhere in the knowledge is real too (e.g. a
+        known |= known_phones()   # page read in an earlier turn of the conversation)
 
     def phone(m):
         ph = m.group(0)

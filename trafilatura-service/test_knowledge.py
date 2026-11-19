@@ -177,7 +177,7 @@ def test_answer_text_rules():
     text, removed = knowledge.check_answer_text(
         "See [Ways to Give](https://alumni.iitbombay.org/s/ways-to-give) or [this](https://evil.com/x). "
         "Mail givingback@iitbacr.com or scam@gmail.com. Call +91 22 2576 4889 or +1 415 555 0199. "
-        "Reports for 2023-2024 and 2019 - 20. Raw link https://bit.ly/abc.", evidence)
+        "Reports for 2023-2024 and 2019 - 20. Raw link https://bit.ly/abc.", evidence, ground_links=False)
     assert "[Ways to Give](https://alumni.iitbombay.org/s/ways-to-give)" in text
     assert "https://evil.com/x" not in text and "this" in text            # label kept, link dropped
     assert "givingback@iitbacr.com" in text and "[email removed]" in text
@@ -211,6 +211,23 @@ def test_mailto_link_repaired_to_match_its_label():
     import knowledge
     text, removed = knowledge.check_answer_text(
         "Write to [timebank.iitbaa@iitbombay.org](mailto:timebank.iitbombay.org) or "
-        "[givingback@iitbacr.com](mailto:givingback@iitbacr.com).", "")
+        "[givingback@iitbacr.com](mailto:givingback@iitbacr.com).", "", ground_links=False)
     assert "[timebank.iitbaa@iitbombay.org](mailto:timebank.iitbaa@iitbombay.org)" in text
     assert "[givingback@iitbacr.com](mailto:givingback@iitbacr.com)" in text and not removed
+
+
+def test_links_and_emails_must_exist_in_the_knowledge(client):
+    """An allowed domain is not enough: the model once invented acr.iitbombay.org/causes/udaan/ (404)."""
+    import knowledge
+    text, removed = knowledge.check_answer_text(
+        "See [Ways to Give](https://alumni.iitbombay.org/s/ways-to-give), "
+        "[UDAAN](https://acr.iitbombay.org/causes/udaan/) and https://acr.iitbombay.org/young-faculty-fellowship/ . "
+        "Mail givingback@iitbacr.com or udaan-team@iitbombay.org. "
+        "Tool said: see [this](https://acr.iitbombay.org/brand-new-page/).",
+        "observation: https://acr.iitbombay.org/brand-new-page/")
+    assert "[Ways to Give](https://alumni.iitbombay.org/s/ways-to-give)" in text       # FAQ link
+    assert "https://acr.iitbombay.org/young-faculty-fellowship/" in text              # a page's own URL
+    assert "causes/udaan" not in text and "UDAAN" in text                             # invented: text kept, link dropped
+    assert "[this](https://acr.iitbombay.org/brand-new-page/)" in text                # seen in a tool result this turn
+    assert "givingback@iitbacr.com" in text and "udaan-team@iitbombay.org" not in text
+    assert set(removed) == {"https://acr.iitbombay.org/causes/udaan/", "udaan-team@iitbombay.org"}
