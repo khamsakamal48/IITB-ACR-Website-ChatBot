@@ -4,36 +4,39 @@ Public chatbot for **IIT Bombay Alumni & Corporate Relations** — https://acr.i
 It answers visitors from **whole Markdown pages**, not vector-search chunks, so it does
 not return half an answer, and it gives the same answer every time.
 
-> **Status (16 Nov 2026)**
+> **Status (19 Nov 2026)**
 >
 > | Phase | What | State |
 > |---|---|---|
 > | 0 | Repo + tooling housekeeping | ✅ done |
 > | 1 | Knowledge bundle: website + team FAQ → OKF Markdown | ✅ done |
 > | 2 | 52 compiled topic pages | ✅ drafted · ⏳ **team review** |
-> | 3 | Knowledge service (container) | ✅ built & tested · ⏳ **deploy (this README)** |
-> | 4 | n8n chat workflow (Gemini Flash, guardrails, memory, logging) | ⏳ waits for a Gemini API credential |
-> | 5 | Sync workflows write files instead of embeddings | ⏳ |
+> | 3 | Knowledge service (container) | ✅ deployed |
+> | 4 | n8n chat workflow (gpt-6-luna via OpenRouter, guardrails, local memory + log) | ✅ built & tested, **not public yet** |
+> | 5 | Website sync writes files instead of embeddings (A, A2) | ✅ built & tested · ⏳ deploy (step 8) |
+> | 5b | FAQ refresh | manual: [FAQ changes](#faq-changes) |
+> | 5c | Job D: redraft stale topic pages | ⏳ after the team's topic-page review |
 > | 6 | Evaluation + soft launch, then retire v1 | ⏳ |
 >
 > **Prod still runs the v1 vector-RAG workflows** until Phase 6. Their docs, SQL and
-> checklist are in [`legacy-v1/`](legacy-v1/). Deploying the Phase 3 container does
-> **not** affect them: `POST /extract`, which v1 Workflow A uses, is unchanged.
+> checklist are in [`legacy-v1/`](legacy-v1/). The v2 container keeps `POST /extract`,
+> which v1 Workflow A uses, unchanged.
 
 ---
 
 ## How it works
 
 ```
-             ┌──── same for every chat turn (cached by Gemini, ~32K tokens) ────┐
+             ┌──── same for every chat turn (~32K tokens) ──────────────────────┐
              │ rules + tone │ all 211 FAQ answers │ index of approved topics   │
              └──────────────────────────────────────────────────────────────────┘
-WordPress widget ─► n8n chat (Phase 4) ─► guardrails ─► AI Agent · Gemini Flash
-   (BravesChat)                                   │   ├─ Postgres chat memory
-                                                  │   ├─ tool: search  ─┐
-                                                  │   ├─ tool: read    ─┼─► acr-knowledge service
-                                                  │   └─ tool: browse  ─┘   (Markdown files on disk)
-                                                  └─► link/email allow-list ─► log ─► reply
+WordPress widget ─► n8n chat ─► rate limit ─► guardrails ─► AI Agent · gpt-6-luna
+   (BravesChat)        (Phase 4)   (local DB)   (Flash-Lite)   │  ├─ chat memory (local Postgres)
+                                                               │  ├─ tool: search ─┐
+                                                               │  ├─ tool: read   ─┼─► acr-knowledge service
+                                                               │  └─ tool: browse ─┘   (Markdown files on disk)
+                                                               └─► /kb/check-answer ─► reply ─► chat_logs
+WordPress ─(every 6 h: changed pages; nightly: unpublished pages)─► /kb/sync, /kb/reconcile ─► files
 ```
 
 **Knowledge in three layers.** Higher layers win when they disagree:
@@ -275,6 +278,39 @@ crontab (`sudo crontab -e`), since podman here runs as root:
 `backups/` is git-ignored (it holds chat data). Restore with
 `podman exec -i n8n-postgres pg_restore -U n8n -d acr_chatbot --clean < <file>`.
 
+### 8. Website sync (Phase 5)
+
+Two n8n workflows keep the knowledge in step with WordPress. They call the knowledge
+service, which reuses `site-scrape/scrape_site.py`'s extraction, so synced pages look
+exactly like the bulk-scraped ones:
+
+| n8n workflow | Schedule | Calls | Emails Kamal when |
+|---|---|---|---|
+| **ACR v2 — A: Sync website → knowledge** | every 6 h, at :45 | `POST /kb/sync` (pages modified since last run) | the call fails or any page errors |
+| **ACR v2 — A2: Remove unpublished pages** | nightly 02:30 | `POST /kb/reconcile` | the call fails or it refuses a mass delete |
+
+Deploy (the container gains the sync code; data is kept):
+
+```bash
+cd /opt/acr-chatbot && git pull
+sudo podman compose build && sudo podman rm -f acr-trafilatura && sudo podman compose up -d
+sleep 20 && source .env
+# preview what the first sync would change (writes nothing)
+curl -s -X POST localhost:8080/kb/sync -H "Authorization: Bearer $KB_TOKEN" \
+     -H 'Content-Type: application/json' -d '{"dry_run": true}' | python3 -m json.tool | head -40
+# first real run: everything changed since the bulk scrape (~1-2 min)
+curl -s -X POST localhost:8080/kb/sync -H "Authorization: Bearer $KB_TOKEN" \
+     -H 'Content-Type: application/json' -d '{}' | python3 -m json.tool | head -40
+```
+
+Then activate both workflows in n8n. Status at any time: `GET /kb/sync/state`.
+
+- **Scanned (image-only) PDFs are skipped** as "no text", like the bulk scrape: the
+  container has no OCR. (On a laptop with Tesseract installed, the PDF library OCRs them
+  automatically and a run can take minutes.)
+- **Reconcile never mass-deletes**: if WordPress returns fewer than half the pages the
+  bundle holds for a type (outage, permission change), that type is skipped and you get an email.
+
 ### Operating it
 
 All commands run from `/opt/acr-chatbot`.
@@ -283,14 +319,14 @@ All commands run from `/opt/acr-chatbot`.
 |---|---|
 | **Logs** | `sudo podman logs -f acr-trafilatura` |
 | **Update code** | `git pull && sudo podman compose build && sudo podman rm -f acr-trafilatura && sudo podman compose up -d` (everything in `data/` is kept). podman-compose's `up -d --build` builds the new image but **keeps the old container running**, so remove it explicitly. Check with `podman inspect acr-trafilatura --format '{{.Image}}'`. |
-| **Replace the whole bundle** | rsync the new `knowledge/` into `data/knowledge/` (as in step 2), then `curl -X POST -H "Authorization: Bearer $KB_TOKEN" localhost:8080/kb/reindex` |
+| **Replace the whole bundle** | **Bootstrap / disaster recovery only.** Once the sync (step 8) is live, rsyncing a rebuilt bundle with `--delete` **reverts every page the sync refreshed since your scrape**. If you must: run a fresh scrape first, rsync, `curl -X POST -H "Authorization: Bearer $KB_TOKEN" localhost:8080/kb/reindex`, then `POST /kb/sync` with `{"since": "<scrape date>T00:00:00"}`. |
 | **History / rollback** | Every write through the API is a commit: `git -C data/knowledge log --oneline`. Roll back with `git -C data/knowledge revert <sha>`, then `/kb/reindex`. This history is local to the server and never pushed. |
 | **Rotate the token** | Edit `KB_TOKEN` in `.env`, run `sudo podman compose up -d`, then update the n8n credential |
 | **Rebuild the search index** | `POST /kb/reindex`, or delete `data/kb-index.sqlite` and restart |
 | **Backup** | `data/knowledge/` is the only state; the index can always be rebuilt |
 
-Until the Phase 5 sync is live, content updates are manual: rebuild the bundle (below),
-rsync it in and reindex.
+Website changes reach the bot automatically through the sync (step 8). FAQ changes are
+manual: see [FAQ changes](#faq-changes).
 
 ---
 
@@ -331,11 +367,23 @@ website (e.g. the recurring-gift minimum, the alumni count, Diamond Jubilee reun
 
 ### FAQ changes
 
-The team edits the **FAQ sheet**; nobody edits `faq/*.md` by hand. Until Workflow B is
-rewired (Phase 5), rerun `tools/build_okf.py` and rsync. Once it is rewired, Workflow B
-posts the sheet to `PUT /kb/faq`.
+The team edits the FAQ spreadsheet; nobody edits `faq/*.md` by hand. To publish a new
+version, push **only the FAQ** to the server (this replaces `faq/` and nothing else):
 
----
+```bash
+# laptop: spreadsheet -> JSON
+uv run --with pyyaml --with openpyxl python -I tools/faq_to_json.py "Chatbot FAQ ACR.xlsx" > faq.json
+scp faq.json <user>@<server>:/opt/acr-chatbot/
+# server
+cd /opt/acr-chatbot && source .env
+curl -s -X PUT localhost:8080/kb/faq -H "Authorization: Bearer $KB_TOKEN" \
+     -H 'Content-Type: application/json' --data @faq.json; echo    # {"categories":27,"answers":211}
+rm faq.json
+```
+
+The bot uses the new answers from the next message. Every update is in the local history
+(`git -C data/knowledge log`). Don't use `tools/build_okf.py` + rsync for FAQ updates: it
+rebuilds the website pages from your last scrape too, undoing the sync's updates.
 
 ## Development
 
@@ -357,16 +405,17 @@ n8n workflow edits follow the pull → edit → push loop in [`workflows/README.
 
 ## Roadmap (Phases 4–6)
 
-- **Phase 4: chat workflow.** Chat Trigger (BravesChat webhook) → input guardrails (n8n
-  Guardrails node: jailbreak, PII, off-topic) → AI Agent on **Gemini Flash** (native Google
-  Gemini Chat Model node) with tools `search`, `read`, `browse` and the existing
-  "Escalate to ACR Team" mail tool → output link/email allow-list → `chat_logs` table.
-  Memory: Postgres Chat Memory (schema `acr_website_chatbot`). Edge: rate limits,
-  allowed origins, message-length cap. **Blocked on a dedicated Gemini API credential in
-  prod n8n.**
-- **Phase 5: sync.** Workflow A → `/extract` → `PUT /kb/source`; A2 → `DELETE /kb/page`;
-  B → `PUT /kb/faq`; a new daily job rewrites `stale` topic pages (marked unverified, emailed to
-  the team for approval).
+- **Phase 4: chat workflow. Done, not public yet.** n8n workflow `T4BkIX8xsaZzu6hd`
+  (`workflows/C-v2-chat-okf.json`, generated by `tools/make_chat_v2_workflow.py`): webhook
+  (BravesChat-compatible, `X-N8N-Auth`) → input checks → per-session rate limit → Guardrails
+  (jailbreak + NSFW on `google/gemini-3.5-flash-lite` via OpenRouter) → AI Agent on
+  `openai/gpt-6-luna` via OpenRouter with tools search / read / browse + "Escalate to ACR
+  Team" → `/kb/check-answer` (link/email allow-list, grounded phone numbers) → reply →
+  `chat_logs`. Memory and log in the local `acr_chatbot` database. ~4 s for FAQ answers,
+  ~8 s with page lookups.
+- **Phase 5: sync. Done.** `/kb/sync` (every 6 h) and `/kb/reconcile` (nightly) via n8n
+  workflows A and A2; FAQ updates are manual (`tools/faq_to_json.py`). Still to come: job D,
+  which redrafts stale topic pages for approval, once the team has approved the topic pages.
 - **Phase 6: evaluation and launch.** Golden set = the 211 FAQ questions plus their
   alternative phrasings, scored by an LLM judge, with the same answer required on 3
   repeat runs; plus long-tail and red-team sets. Soft-launch on one page, switch
