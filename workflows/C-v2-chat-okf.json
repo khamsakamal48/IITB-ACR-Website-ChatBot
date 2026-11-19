@@ -199,25 +199,33 @@
       }
     },
     {
-      "id": "gemlite",
-      "name": "Gemini Flash-Lite (guardrails)",
-      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
-      "typeVersion": 1.2,
+      "id": "guardmodel",
+      "name": "Guardrail Model (gemini-3.5-flash-lite via OpenRouter)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
       "position": [
         -100,
         320
       ],
       "credentials": {
-        "googlePalmApi": {
-          "id": "apsURcCTtxKzPb77",
-          "name": "ACR Website Chatbot - Gemini"
+        "openAiApi": {
+          "id": "V8kzhjnzg317YSjL",
+          "name": "ACR Website Chatbot v2 - OpenRouter (OpenAI-compatible)"
         }
       },
+      "notes": "Must return raw JSON the Guardrails node can parse. gpt-6-luna wraps verdicts in ```json fences -> node fails closed and blocks everything. Direct Gemini API was slow (~6 s) on 2026-11-19; via OpenRouter ~1.1 s.",
       "parameters": {
-        "modelName": "models/gemini-3.5-flash-lite",
+        "model": {
+          "__rl": true,
+          "value": "google/gemini-3.5-flash-lite",
+          "mode": "id"
+        },
+        "builtInTools": {},
         "options": {
+          "maxTokens": 200,
           "temperature": 0,
-          "maxOutputTokens": 200
+          "timeout": 15000,
+          "maxRetries": 1
         }
       }
     },
@@ -682,7 +690,7 @@
         ]
       ]
     },
-    "Gemini Flash-Lite (guardrails)": {
+    "Guardrail Model (gemini-3.5-flash-lite via OpenRouter)": {
       "ai_languageModel": [
         [
           {

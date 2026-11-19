@@ -10,6 +10,7 @@ ROOT = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else ".")
 # valid key (same credential works in HTTP Request). Bake-off 2026-11-17: luna 1.8-2.7 s/call,
 # $0.0035; gemini-3.8-flash 3.5-5.4 s, $0.023; gemini-3.5-flash-lite ~2 s but misattributed contacts.
 MODEL = "openai/gpt-6-luna"
+GUARD_MODEL = "google/gemini-3.5-flash-lite"   # guardrail checks (jailbreak, NSFW)
 OR_CRED = {"openAiApi": {"id": "V8kzhjnzg317YSjL", "name": "ACR Website Chatbot v2 - OpenRouter (OpenAI-compatible)"}}
 prompt = (ROOT / "workflows/C-v2-system-prompt.md").read_text().strip()
 system = ("=" + prompt +
@@ -19,7 +20,6 @@ system = ("=" + prompt +
 KB = "http://acr-trafilatura:8000"
 KB_CRED = {"httpHeaderAuth": {"id": "5DiC041ERvTk9E5S", "name": "ACR Knowledge Service"}}
 PG_CRED = {"postgres": {"id": "0ZOm9jEUO1M7PyKG", "name": "ACR Chatbot (local Postgres)"}}   # acr_chatbot DB in n8n-postgres (sql/v2-local-postgres.sql)
-GEM_CRED = {"googlePalmApi": {"id": "apsURcCTtxKzPb77", "name": "ACR Website Chatbot - Gemini"}}
 P = "$('Prepare Input').first().json"
 
 def reply(name, outcome, text, pos, flags="null"):
@@ -72,9 +72,11 @@ nodes = [
   "onError": "continueRegularOutput",
   "parameters": {"operation": "classify", "text": f"={{{{ {P}.chatInput }}}}",
     "guardrails": {"jailbreak": {"value": {"threshold": 0.8}}, "nsfw": {"value": {"threshold": 0.8}}}}},
- {"id": "gemlite", "name": "Gemini Flash-Lite (guardrails)", "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini", "typeVersion": 1.2,
-  "position": [-100, 320], "credentials": GEM_CRED,
-  "parameters": {"modelName": "models/gemini-3.5-flash-lite", "options": {"temperature": 0, "maxOutputTokens": 200}}},
+ {"id": "guardmodel", "name": "Guardrail Model (gemini-3.5-flash-lite via OpenRouter)", "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+  "typeVersion": 1.3, "position": [-100, 320], "credentials": OR_CRED,
+  "notes": "Must return raw JSON the Guardrails node can parse. gpt-6-luna wraps verdicts in ```json fences -> node fails closed and blocks everything. Direct Gemini API was slow (~6 s) on 2026-11-19; via OpenRouter ~1.1 s.",
+  "parameters": {"model": {"__rl": True, "value": GUARD_MODEL, "mode": "id"}, "builtInTools": {},
+    "options": {"maxTokens": 200, "temperature": 0, "timeout": 15000, "maxRetries": 1}}},
  {"id": "kbctx", "name": "Get KB Context", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [140, 0],
   "credentials": KB_CRED, "retryOnFail": True, "maxTries": 2, "waitBetweenTries": 500, "onError": "continueErrorOutput",
   "parameters": {"method": "GET", "url": KB + "/kb/context", "authentication": "genericCredentialType",
@@ -133,7 +135,7 @@ conn = {
  "Recent Messages": {"main": [[{"node": "Within Rate Limit?", "type": "main", "index": 0}]]},
  "Within Rate Limit?": {"main": [[{"node": "Input Guardrails", "type": "main", "index": 0}], [{"node": "Reply: Rate Limited", "type": "main", "index": 0}]]},
  "Input Guardrails": {"main": [[{"node": "Get KB Context", "type": "main", "index": 0}], [{"node": "Reply: Blocked", "type": "main", "index": 0}]]},
- "Gemini Flash-Lite (guardrails)": {"ai_languageModel": [[{"node": "Input Guardrails", "type": "ai_languageModel", "index": 0}]]},
+ "Guardrail Model (gemini-3.5-flash-lite via OpenRouter)": {"ai_languageModel": [[{"node": "Input Guardrails", "type": "ai_languageModel", "index": 0}]]},
  "Get KB Context": {"main": [[{"node": "AI Agent", "type": "main", "index": 0}], [{"node": "Reply: Error", "type": "main", "index": 0}]]},
  "Chat Model (gpt-6-luna via OpenRouter)": {"ai_languageModel": [[{"node": "AI Agent", "type": "ai_languageModel", "index": 0}]]},
  "Postgres Chat Memory": {"ai_memory": [[{"node": "AI Agent", "type": "ai_memory", "index": 0}]]},
