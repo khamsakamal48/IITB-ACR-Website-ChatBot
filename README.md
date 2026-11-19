@@ -282,7 +282,7 @@ All commands run from `/opt/acr-chatbot`.
 | Task | How |
 |---|---|
 | **Logs** | `sudo podman logs -f acr-trafilatura` |
-| **Update code** | `git pull && sudo podman compose up -d --build` (everything in `data/` is kept) |
+| **Update code** | `git pull && sudo podman compose build && sudo podman rm -f acr-trafilatura && sudo podman compose up -d` (everything in `data/` is kept). podman-compose's `up -d --build` builds the new image but **keeps the old container running**, so remove it explicitly. Check with `podman inspect acr-trafilatura --format '{{.Image}}'`. |
 | **Replace the whole bundle** | rsync the new `knowledge/` into `data/knowledge/` (as in step 2), then `curl -X POST -H "Authorization: Bearer $KB_TOKEN" localhost:8080/kb/reindex` |
 | **History / rollback** | Every write through the API is a commit: `git -C data/knowledge log --oneline`. Roll back with `git -C data/knowledge revert <sha>`, then `/kb/reindex`. This history is local to the server and never pushed. |
 | **Rotate the token** | Edit `KB_TOKEN` in `.env`, run `sudo podman compose up -d`, then update the n8n credential |
