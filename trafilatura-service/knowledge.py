@@ -271,6 +271,7 @@ BARE_URL = re.compile(r"https?://[^\s)\]>\"'<]+")
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 PHONE = re.compile(r"\+?\d[\d ()\-]{6,}\d")
 YEAR_RANGE = re.compile(r"^(19|20)\d{2}\s*[-–]\s*(19|20)?\d{2}$")
+MAILTO_LABEL = re.compile(r"\[([A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)\]\(mailto:[^)]*\)")
 HOST_OF = re.compile(r"^https?://([^/?#:@\s]+)(?::\d+)?(?:[/?#]|$)", re.I)
 FALLBACK_ANSWER = ("Sorry, I couldn't put an answer together. Please try rephrasing, "
                    "or write to us at dean.acr.office@iitbombay.org.")
@@ -337,6 +338,8 @@ def check_answer_text(text: str, evidence: str) -> tuple[str, list[str]]:
         removed.append(ph)
         return "[number removed]"
 
+    # [name@x.org](mailto:something-else) -> the link must point at the address it shows
+    text = MAILTO_LABEL.sub(lambda m: f"[{m.group(1)}](mailto:{m.group(1)})", text)
     text = MD_LINK.sub(md, text)
     text = BARE_URL.sub(bare, text)
     text = EMAIL.sub(mail, text)

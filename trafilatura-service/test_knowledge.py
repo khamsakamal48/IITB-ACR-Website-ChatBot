@@ -205,3 +205,12 @@ def test_check_answer_endpoint_builds_log_record(client):
     empty = client.post("/kb/check-answer", headers=AUTH, json={"answer": "  "}).json()
     assert empty["output"].startswith("Sorry") and empty["latency_ms"] is None
     assert client.post("/kb/check-answer", json={"answer": "x"}).status_code == 401
+
+
+def test_mailto_link_repaired_to_match_its_label():
+    import knowledge
+    text, removed = knowledge.check_answer_text(
+        "Write to [timebank.iitbaa@iitbombay.org](mailto:timebank.iitbombay.org) or "
+        "[givingback@iitbacr.com](mailto:givingback@iitbacr.com).", "")
+    assert "[timebank.iitbaa@iitbombay.org](mailto:timebank.iitbaa@iitbombay.org)" in text
+    assert "[givingback@iitbacr.com](mailto:givingback@iitbacr.com)" in text and not removed

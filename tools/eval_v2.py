@@ -186,6 +186,8 @@ def main() -> None:
     ap.add_argument("--token", type=Path, default=Path.home() / "acr-chatbot/.chat-webhook-token")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--pilot", action="store_true")
+    ap.add_argument("--rerun-from", type=Path, help="results.jsonl of an earlier run: re-test its non-pass cases")
+    ap.add_argument("--regression", type=int, default=0, help="with --rerun-from: also N random earlier passes")
     ap.add_argument("--kb", type=Path, default=Path.home() / "acr-chatbot/knowledge",
                     help="local copy of the bundle, to verify links/emails in answers")
     a = ap.parse_args()
@@ -194,6 +196,13 @@ def main() -> None:
     load_corpus(a.kb)
     token = a.token.read_text().strip()
     cases = build_cases(a.faq, a.pilot)
+    if a.rerun_from:
+        import random
+        prev = [json.loads(l) for l in a.rerun_from.read_text().splitlines()]
+        bad = {r["key"] for r in prev if r["judge"].get("verdict") != "pass" or r["kind"] == "adversarial"}
+        passed = sorted(r["key"] for r in prev if r["key"] not in bad)
+        keep = bad | set(random.Random(7).sample(passed, min(a.regression, len(passed))))
+        cases = [c for c in cases if c["key"] in keep]
     res_file = a.out / "results.jsonl"
     done = {}
     if res_file.exists():

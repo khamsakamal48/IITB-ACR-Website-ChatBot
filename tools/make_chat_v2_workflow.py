@@ -22,6 +22,12 @@ KB_CRED = {"httpHeaderAuth": {"id": "5DiC041ERvTk9E5S", "name": "ACR Knowledge S
 PG_CRED = {"postgres": {"id": "0ZOm9jEUO1M7PyKG", "name": "ACR Chatbot (local Postgres)"}}   # acr_chatbot DB in n8n-postgres (sql/v2-local-postgres.sql)
 P = "$('Prepare Input').first().json"
 
+SENSITIVE_REPLY = ("Please don't share card numbers, bank details, PAN, Aadhaar or other ID numbers in this chat. "
+                   "We never take payments or personal details here. To donate, please use our official "
+                   "[Ways to Give page](https://alumni.iitbombay.org/s/ways-to-give). For receipts, 80G or payment "
+                   "problems, write to us at givingback@iitbacr.com and our team will help you securely.")
+
+
 def reply(name, outcome, text, pos, flags="null"):
     return {"id": name.lower().replace(" ", "-").replace(":", ""), "name": name,
             "type": "n8n-nodes-base.set", "typeVersion": 3.4, "position": pos,
@@ -116,6 +122,17 @@ nodes = [
     "jsonBody": "={{ JSON.stringify({ answer: $json.output ?? '', steps: $json.intermediateSteps ?? [], "
                 f"session_id: {P}.sessionId, question: {P}.chatInput, started_at: {P}.startedAt, model: '" + MODEL + "' }) }}",
     "options": {"timeout": 5000}}},
+ {"id": "piicheck", "name": "Sensitive Data Check", "type": "@n8n/n8n-nodes-langchain.guardrails", "typeVersion": 2,
+  "position": [-210, -120],
+  "notes": "Pattern-based (no LLM call): card numbers, PAN, Aadhaar, IBAN, passport, SSN in the visitor's message -> a specific warning instead of the generic block.",
+  "parameters": {"operation": "classify", "text": f"={{{{ {P}.chatInput }}}}",
+    "guardrails": {"pii": {"value": {"type": "selected", "entities": ["CREDIT_CARD", "IN_PAN", "IN_AADHAAR", "IBAN_CODE", "IN_PASSPORT", "US_SSN"]}}}}},
+ {"id": "reply-sensitive", "name": "Reply: Sensitive Data", "type": "n8n-nodes-base.set", "typeVersion": 3.4, "position": [-100, -260],
+  "parameters": {"mode": "raw", "options": {},
+    "jsonOutput": "={{ { output: " + json.dumps(SENSITIVE_REPLY) + ", outcome: 'blocked', "
+      f"session_id: {P}.sessionId, question: '[message withheld: contained sensitive data]', "
+      "guard_flags: { sensitive_data: ($json.checks || []).map(c => c.name) }, sanitized: null, tool_calls: 0, "
+      f"pages_read: [], latency_ms: Date.now() - {P}.startedAt, model: null, kb_version: null }} }}}}"}},
  reply("Reply: Invalid Input", "invalid", "Please type your question (up to 1,000 characters) and we'll do our best to help.", [-540, 460]),
  reply("Reply: Rate Limited", "rate_limited", "You've sent quite a few messages in a short time. Please wait a few minutes and try again, or write to us at dean.acr.office@iitbombay.org.", [-100, 460]),
  reply("Reply: Blocked", "blocked", "I can only help with questions about IIT Bombay alumni, giving and ACR programmes. Could you rephrase your question?", [140, 200], flags="$json"),
@@ -133,7 +150,9 @@ conn = {
  "Prepare Input": {"main": [[{"node": "Valid Input?", "type": "main", "index": 0}]]},
  "Valid Input?": {"main": [[{"node": "Recent Messages", "type": "main", "index": 0}], [{"node": "Reply: Invalid Input", "type": "main", "index": 0}]]},
  "Recent Messages": {"main": [[{"node": "Within Rate Limit?", "type": "main", "index": 0}]]},
- "Within Rate Limit?": {"main": [[{"node": "Input Guardrails", "type": "main", "index": 0}], [{"node": "Reply: Rate Limited", "type": "main", "index": 0}]]},
+ "Within Rate Limit?": {"main": [[{"node": "Sensitive Data Check", "type": "main", "index": 0}], [{"node": "Reply: Rate Limited", "type": "main", "index": 0}]]},
+ "Sensitive Data Check": {"main": [[{"node": "Input Guardrails", "type": "main", "index": 0}], [{"node": "Reply: Sensitive Data", "type": "main", "index": 0}]]},
+ "Reply: Sensitive Data": {"main": [[{"node": "Respond to Widget", "type": "main", "index": 0}]]},
  "Input Guardrails": {"main": [[{"node": "Get KB Context", "type": "main", "index": 0}], [{"node": "Reply: Blocked", "type": "main", "index": 0}]]},
  "Guardrail Model (gemini-3.5-flash-lite via OpenRouter)": {"ai_languageModel": [[{"node": "Input Guardrails", "type": "ai_languageModel", "index": 0}]]},
  "Get KB Context": {"main": [[{"node": "AI Agent", "type": "main", "index": 0}], [{"node": "Reply: Error", "type": "main", "index": 0}]]},
