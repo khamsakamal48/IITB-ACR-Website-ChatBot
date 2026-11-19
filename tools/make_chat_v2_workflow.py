@@ -18,7 +18,7 @@ system = ("=" + prompt +
 
 KB = "http://acr-trafilatura:8000"
 KB_CRED = {"httpHeaderAuth": {"id": "5DiC041ERvTk9E5S", "name": "ACR Knowledge Service"}}
-PG_CRED = {"postgres": {"id": "uM0P1pO2vip8g5GB", "name": "Supabase - IT Ops - ACR Website Chatbot"}}
+PG_CRED = {"postgres": {"id": "0ZOm9jEUO1M7PyKG", "name": "ACR Chatbot (local Postgres)"}}   # acr_chatbot DB in n8n-postgres (sql/v2-local-postgres.sql)
 GEM_CRED = {"googlePalmApi": {"id": "apsURcCTtxKzPb77", "name": "ACR Website Chatbot - Gemini"}}
 P = "$('Prepare Input').first().json"
 
@@ -42,57 +42,7 @@ def tool(name, path, desc, params, pos):
               "queryParameters": {"parameters": [{"name": k, "value": v} for k, v in params]},
               "options": {"timeout": 8000}}}
 
-SANITIZE = r"""// Why Code: allow-list every link and email in the answer (markdown links, bare URLs,
-// mailto, plain emails) and extract which pages the agent read — no native node does either.
-const p = $('Prepare Input').first().json;
-const kb = $('Get KB Context').first().json;
-let text = String($json.output ?? '').trim();
-const HOSTS = ['iitbombay.org', 'iitb.ac.in', 'iitbacr.com', 'sarc-iitb.org'];
-const PREFIXES = ['https://docs.google.com/forms/'];
-const okEmail = e => HOSTS.some(h => e.toLowerCase().endsWith('@' + h) || e.toLowerCase().endsWith('.' + h));
-// No URL() here: the Code-node sandbox lacks it, so parse the host with a regex.
-const okUrl = u => {
-  const mail = /^mailto:([^?]+)/i.exec(u);
-  if (mail) return okEmail(decodeURIComponent(mail[1]));
-  const m = /^https?:\/\/([^\/?#:@\s]+)(?::\d+)?(?:[\/?#]|$)/i.exec(u);
-  if (!m) return false;
-  const host = m[1].toLowerCase();
-  return HOSTS.some(h => host === h || host.endsWith('.' + h)) || PREFIXES.some(pr => u.startsWith(pr));
-};
-const removed = [];
-text = text.replace(/\[([^\]]*)\]\(([^)\s]+)\)/g, (m, label, url) => okUrl(url) ? m : (removed.push(url), label));
-text = text.replace(/https?:\/\/[^\s)\]>"'<]+/g, u => {
-  const clean = u.replace(/[.,;:!?]+$/, '');
-  return okUrl(clean) ? u : (removed.push(clean), '[link removed]');
-});
-text = text.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g, e => okEmail(e) ? e : (removed.push(e), '[email removed]'));
-// Phone numbers must be grounded: present in the prompt knowledge or a tool result this turn.
-const stepsAll = $json.intermediateSteps ?? [];
-const evidence = String(kb.text ?? '') + ' ' + stepsAll.map(s => typeof s.observation === 'string' ? s.observation : JSON.stringify(s.observation ?? '')).join(' ');
-const PHONE = /\+?\d[\d ()\-]{6,}\d/g;
-const digits = s => s.replace(/\D/g, '');
-const known = new Set((evidence.match(PHONE) || []).map(digits).filter(d => d.length >= 8).flatMap(d => [d, d.slice(-8)]));
-const yearRange = /^(19|20)\d{2}\s*[-\u2013]\s*(19|20)?\d{2}$/;
-text = text.replace(PHONE, ph => {
-  const d = digits(ph);
-  if (d.length < 8 || yearRange.test(ph.trim())) return ph;
-  return (known.has(d) || known.has(d.slice(-8))) ? ph : (removed.push(ph), '[number removed]');
-});
-if (!text) text = "Sorry, I couldn't put an answer together. Please try rephrasing, or write to us at dean.acr.office@iitbombay.org.";
-const steps = $json.intermediateSteps ?? [];
-const pages = [];
-for (const s of steps) {
-  let inp = s.action?.toolInput ?? {};
-  if (typeof inp === 'string') { try { inp = JSON.parse(inp); } catch { inp = {}; } }
-  if (s.action?.tool === 'read_page' && inp.path) pages.push(String(inp.path));
-}
-return { json: {
-  output: text, outcome: 'answered', session_id: p.sessionId, question: p.chatInput,
-  guard_flags: null, sanitized: removed.length ? { removed } : null,
-  tool_calls: steps.length, pages_read: pages, latency_ms: Date.now() - p.startedAt,
-  model: 'MODEL_PLACEHOLDER',  // keep in sync with the chat model node
-  kb_version: kb.version ?? null,
-} };"""
+# Answer checks live in the knowledge service now: POST /kb/check-answer (knowledge.py).
 
 nodes = [
  {"id": "webhook", "name": "Webhook", "type": "n8n-nodes-base.webhook", "typeVersion": 2, "position": [-1200, 300],
@@ -112,7 +62,7 @@ nodes = [
  {"id": "ratecheck", "name": "Recent Messages", "type": "n8n-nodes-base.postgres", "typeVersion": 2.6, "position": [-540, 200],
   "credentials": PG_CRED, "alwaysOutputData": True, "onError": "continueRegularOutput",
   "parameters": {"operation": "executeQuery",
-    "query": "SELECT count(*)::int AS recent FROM acr_website_chatbot.chat_logs WHERE session_id = $1 AND ts > now() - interval '10 minutes';",
+    "query": "SELECT count(*)::int AS recent FROM chat_logs WHERE session_id = $1 AND ts > now() - interval '10 minutes';",
     "options": {"queryReplacement": "={{ [ $json.sessionId ] }}"}}},
  {"id": "withinlimit", "name": "Within Rate Limit?", "type": "n8n-nodes-base.if", "typeVersion": 2.2, "position": [-320, 200],
   "parameters": {"options": {}, "conditions": {"options": {"caseSensitive": True, "leftValue": "", "typeValidation": "loose", "version": 2},
@@ -156,9 +106,14 @@ nodes = [
   "webhookId": "7d3e9a1b-5c2f-4e6d-8a9b-0f4c2e8d1a63",
   "credentials": {"microsoftOutlookOAuth2Api": {"id": "sOlo4aRn9GbBUHhw", "name": "Kamal Outlook Account"}},
   "parameters": {"toRecipients": "kamal.hamza@iitbacr.com", "subject": "Enquiry", "additionalFields": {"bodyContentType": "html"}}},
- {"id": "sanitize", "name": "Check Links & Emails", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [760, -60],
-  "notes": "Why Code: allow-list every link and email in the answer and extract pages read from intermediate steps; no native node does either.",
-  "parameters": {"mode": "runOnceForEachItem", "jsCode": SANITIZE.replace("MODEL_PLACEHOLDER", MODEL)}},
+ {"id": "checkanswer", "name": "Check Answer", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [760, -60],
+  "credentials": KB_CRED, "retryOnFail": True, "maxTries": 2, "waitBetweenTries": 300, "onError": "continueErrorOutput",
+  "notes": "Link/email allow-list + grounded phone numbers + pages read, in the knowledge service (POST /kb/check-answer). Returns the full chat_logs record.",
+  "parameters": {"method": "POST", "url": KB + "/kb/check-answer", "authentication": "genericCredentialType",
+    "genericAuthType": "httpHeaderAuth", "sendBody": True, "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({ answer: $json.output ?? '', steps: $json.intermediateSteps ?? [], "
+                f"session_id: {P}.sessionId, question: {P}.chatInput, started_at: {P}.startedAt, model: '" + MODEL + "' }) }}",
+    "options": {"timeout": 5000}}},
  reply("Reply: Invalid Input", "invalid", "Please type your question (up to 1,000 characters) and we'll do our best to help.", [-540, 460]),
  reply("Reply: Rate Limited", "rate_limited", "You've sent quite a few messages in a short time. Please wait a few minutes and try again, or write to us at dean.acr.office@iitbombay.org.", [-100, 460]),
  reply("Reply: Blocked", "blocked", "I can only help with questions about IIT Bombay alumni, giving and ACR programmes. Could you rephrase your question?", [140, 200], flags="$json"),
@@ -168,7 +123,7 @@ nodes = [
  {"id": "log", "name": "Log Chat", "type": "n8n-nodes-base.postgres", "typeVersion": 2.6, "position": [1260, 200],
   "credentials": PG_CRED, "onError": "continueRegularOutput",
   "parameters": {"operation": "executeQuery",
-    "query": "INSERT INTO acr_website_chatbot.chat_logs (session_id, question, answer, outcome, guard_flags, sanitized, tool_calls, pages_read, latency_ms, model, kb_version) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, ARRAY(SELECT jsonb_array_elements_text($8::jsonb)), $9, $10, $11);",
+    "query": "INSERT INTO chat_logs (session_id, question, answer, outcome, guard_flags, sanitized, tool_calls, pages_read, latency_ms, model, kb_version) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, ARRAY(SELECT jsonb_array_elements_text($8::jsonb)), $9, $10, $11);",
     "options": {"queryReplacement": "={{ [ $json.session_id || 'unknown', $json.question || '', $json.output, $json.outcome, JSON.stringify($json.guard_flags ?? null), JSON.stringify($json.sanitized ?? null), $json.tool_calls ?? 0, JSON.stringify($json.pages_read ?? []), $json.latency_ms ?? null, $json.model ?? null, $json.kb_version ?? null ] }}"}}},
 ]
 conn = {
@@ -186,8 +141,8 @@ conn = {
  "read_page": {"ai_tool": [[{"node": "AI Agent", "type": "ai_tool", "index": 0}]]},
  "browse_folder": {"ai_tool": [[{"node": "AI Agent", "type": "ai_tool", "index": 0}]]},
  "Escalate to ACR Team": {"ai_tool": [[{"node": "AI Agent", "type": "ai_tool", "index": 0}]]},
- "AI Agent": {"main": [[{"node": "Check Links & Emails", "type": "main", "index": 0}], [{"node": "Reply: Error", "type": "main", "index": 0}]]},
- "Check Links & Emails": {"main": [[{"node": "Respond to Widget", "type": "main", "index": 0}]]},
+ "AI Agent": {"main": [[{"node": "Check Answer", "type": "main", "index": 0}], [{"node": "Reply: Error", "type": "main", "index": 0}]]},
+ "Check Answer": {"main": [[{"node": "Respond to Widget", "type": "main", "index": 0}], [{"node": "Reply: Error", "type": "main", "index": 0}]]},
  "Reply: Invalid Input": {"main": [[{"node": "Respond to Widget", "type": "main", "index": 0}]]},
  "Reply: Rate Limited": {"main": [[{"node": "Respond to Widget", "type": "main", "index": 0}]]},
  "Reply: Blocked": {"main": [[{"node": "Respond to Widget", "type": "main", "index": 0}]]},
