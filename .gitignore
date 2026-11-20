@@ -16,6 +16,7 @@ __pycache__/
 
 # Team review documents (generated from KB content)
 /ACR Chatbot - *.docx
+/ACR Chatbot - *.html
 
 # Server secrets / runtime data
 .env
