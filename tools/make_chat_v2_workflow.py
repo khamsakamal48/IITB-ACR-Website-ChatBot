@@ -17,6 +17,12 @@ system = ("=" + prompt +
   "\n\n# KNOWLEDGE\n{{ $('Get KB Context').first().json.text }}\n\n"
   "Today's date: {{ $now.setZone('Asia/Kolkata').toFormat('d LLLL yyyy') }}")
 
+# Fallback when the agent fails (e.g. "Max iterations reached" after fruitless searches): one tool-less
+# call with the same prompt and FAQ knowledge, still checked by /kb/check-answer. Not saved to chat memory.
+fallback_system = (system + "\n\n# Right now\nYour tools are unavailable for this reply. Answer only from the "
+  "KNOWLEDGE above. If it does not cover the question, share whatever related information you do have, say briefly "
+  "which detail you don't have, and give the right contact from the FAQ. Do not offer to look anything up.")
+
 KB = "http://acr-trafilatura:8000"
 KB_CRED = {"httpHeaderAuth": {"id": "5DiC041ERvTk9E5S", "name": "ACR Knowledge Service"}}
 PG_CRED = {"postgres": {"id": "0ZOm9jEUO1M7PyKG", "name": "ACR Chatbot (local Postgres)"}}   # acr_chatbot DB in n8n-postgres (sql/v2-local-postgres.sql)
@@ -119,9 +125,19 @@ nodes = [
   "notes": "Link/email allow-list + grounded phone numbers + pages read, in the knowledge service (POST /kb/check-answer). Returns the full chat_logs record.",
   "parameters": {"method": "POST", "url": KB + "/kb/check-answer", "authentication": "genericCredentialType",
     "genericAuthType": "httpHeaderAuth", "sendBody": True, "specifyBody": "json",
-    "jsonBody": "={{ JSON.stringify({ answer: $json.output ?? '', steps: $json.intermediateSteps ?? [], "
-                f"session_id: {P}.sessionId, question: {P}.chatInput, started_at: {P}.startedAt, model: '" + MODEL + "' }) }}",
+    "jsonBody": "={{ JSON.stringify({ answer: $json.output ?? $json.text ?? '', steps: $json.intermediateSteps ?? [], "
+                f"session_id: {P}.sessionId, question: {P}.chatInput, started_at: {P}.startedAt, "
+                "model: $json.output === undefined ? '" + MODEL + " (fallback)' : '" + MODEL + "' }) }}",
     "options": {"timeout": 5000}}},
+ {"id": "fallback", "name": "Fallback Answer", "type": "@n8n/n8n-nodes-langchain.chainLlm", "typeVersion": 1.7,
+  "position": [580, 140], "onError": "continueErrorOutput",
+  "notes": "Runs only when the AI Agent fails (e.g. max iterations after fruitless searches): one tool-less answer from the FAQ knowledge, then Check Answer as usual.",
+  "parameters": {"promptType": "define", "text": f"={{{{ {P}.chatInput }}}}",
+    "messages": {"messageValues": [{"type": "SystemMessagePromptTemplate", "message": fallback_system}]}}},
+ {"id": "fallbackmodel", "name": "Fallback Model (gpt-6-luna via OpenRouter)", "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+  "typeVersion": 1.3, "position": [580, 380], "credentials": OR_CRED,
+  "parameters": {"model": {"__rl": True, "value": MODEL, "mode": "id"}, "builtInTools": {},
+    "options": {"maxTokens": 1000, "timeout": 20000, "maxRetries": 1}}},
  {"id": "piicheck", "name": "Sensitive Data Check", "type": "@n8n/n8n-nodes-langchain.guardrails", "typeVersion": 2,
   "position": [-210, -120],
   "notes": "Pattern-based (no LLM call): card numbers, PAN, Aadhaar, IBAN, passport, SSN in the visitor's message -> a specific warning instead of the generic block.",
@@ -162,7 +178,9 @@ conn = {
  "read_page": {"ai_tool": [[{"node": "AI Agent", "type": "ai_tool", "index": 0}]]},
  "browse_folder": {"ai_tool": [[{"node": "AI Agent", "type": "ai_tool", "index": 0}]]},
  "Escalate to ACR Team": {"ai_tool": [[{"node": "AI Agent", "type": "ai_tool", "index": 0}]]},
- "AI Agent": {"main": [[{"node": "Check Answer", "type": "main", "index": 0}], [{"node": "Reply: Error", "type": "main", "index": 0}]]},
+ "AI Agent": {"main": [[{"node": "Check Answer", "type": "main", "index": 0}], [{"node": "Fallback Answer", "type": "main", "index": 0}]]},
+ "Fallback Answer": {"main": [[{"node": "Check Answer", "type": "main", "index": 0}], [{"node": "Reply: Error", "type": "main", "index": 0}]]},
+ "Fallback Model (gpt-6-luna via OpenRouter)": {"ai_languageModel": [[{"node": "Fallback Answer", "type": "ai_languageModel", "index": 0}]]},
  "Check Answer": {"main": [[{"node": "Respond to Widget", "type": "main", "index": 0}], [{"node": "Reply: Error", "type": "main", "index": 0}]]},
  "Reply: Invalid Input": {"main": [[{"node": "Respond to Widget", "type": "main", "index": 0}]]},
  "Reply: Rate Limited": {"main": [[{"node": "Respond to Widget", "type": "main", "index": 0}]]},
